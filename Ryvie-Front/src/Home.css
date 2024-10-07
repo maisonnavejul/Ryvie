@@ -15,13 +15,52 @@ body, html {
   padding: 0;
 }
 
-/* Fond bleu */
+/* Fond avec dégradé */
 .background {
-  background-color: #3e51ff;
+  background: linear-gradient(to bottom, #4455f0, #abb9f8);
   min-height: 100vh;
   background-size: cover;
-  background-repeat: repeat;
+  background-repeat: no-repeat;
   background-position: center;
+  display: flex;
+  flex-direction: row; /* Pour aligner la barre des tâches et le contenu */
+}
+
+/* Barre des tâches sur le côté gauche */
+.taskbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 80px; /* Largeur de la barre */
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.2);
+  display: flex;
+  flex-direction: column; /* Pour disposer les cercles verticalement */
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  z-index: 1000; /* Pour que la barre soit au-dessus du contenu */
+}
+
+/* Cercles dans la barre des tâches */
+.taskbar-circle {
+  width: 60px;
+  height: 60px;
+  background-color: white;
+  border-radius: 50%;
+  box-shadow: 0px 5px 5px rgba(0,0,0,0.3);
+  cursor: pointer;
+  transition: transform 0.3s;
+}
+
+.taskbar-circle:hover {
+  transform: scale(1.1);
+}
+
+/* Contenu principal de la page */
+.content {
+  flex: 1;
+  margin-left: 80px; /* Espace pour la barre des tâches */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -54,23 +93,10 @@ body, html {
   margin-top: 20px;
 }
 
-/* Zone des applications non placées */
-.apps-zone {
-  margin-top: 30px;
-  text-align: center;
-}
-
-.apps-container {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px;
-}
-
 /* Styles pour chaque zone */
 .zone {
-  background-color: rgba(255, 255, 255, 0.2);
-  border: 2px dashed #ccc;
+  /*background-color: rgba(255, 255, 255, 0.2);
+  border: 2px dashed #ccc;*/
   padding: 10px;
   border-radius: 10px;
   width: 100px;

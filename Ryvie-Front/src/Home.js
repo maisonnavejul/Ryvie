@@ -85,6 +85,19 @@ const Zone = ({ zoneId, iconId, moveIcon }) => {
   );
 };
 
+// Composant Taskbar
+const Taskbar = () => {
+  return (
+    <div className="taskbar">
+      <div className="taskbar-circle"></div>
+      <div className="taskbar-circle"></div>
+      <div className="taskbar-circle"></div>
+      <div className="taskbar-circle"></div>
+      <div className="taskbar-circle"></div>
+    </div>
+  );
+};
+
 const Home = () => {
   // État pour stocker les icônes dans chaque zone
   const [zones, setZones] = useState({
@@ -110,6 +123,8 @@ const Home = () => {
       const fromIcons = prevZones[fromZoneId].filter((iconId) => iconId !== id);
       let toIcons = prevZones[toZoneId];
 
+      if (!toIcons) toIcons = [];
+
       if (toIcons.length === 0) {
         // La zone cible est vide, on y ajoute l'icône
         toIcons = [id];
@@ -132,28 +147,33 @@ const Home = () => {
     <DndProvider backend={HTML5Backend}>
       <div className="home-container">
         <div className="background">
-          <h1 className="title">Bienvenue sur Ryvie</h1>
-          <div className="main-content">
-            {/* Zone à gauche du widget */}
-            <Zone zoneId="left" iconId={zones['left']} moveIcon={moveIcon} />
-            {/* Widget central */}
-            <div className="widget">
-              <h2 className="widget-title">Météo Actuelle</h2>
-              <p className="widget-content">Paris, 15°C, Ensoleillé</p>
+          {/* Ajout du composant Taskbar */}
+          <Taskbar />
+          {/* Ajout de la classe content */}
+          <div className="content">
+            <h1 className="title">Bienvenue dans votre Cloud Ryvie</h1>
+            <div className="main-content">
+              {/* Zone à gauche du widget */}
+              <Zone zoneId="left" iconId={zones['left']} moveIcon={moveIcon} />
+              {/* Widget central */}
+              <div className="widget">
+                <h2 className="widget-title">Météo Actuelle</h2>
+                <p className="widget-content">Paris, 15°C, Ensoleillé</p>
+              </div>
+              {/* Zone à droite du widget */}
+              <Zone zoneId="right" iconId={zones['right']} moveIcon={moveIcon} />
             </div>
-            {/* Zone à droite du widget */}
-            <Zone zoneId="right" iconId={zones['right']} moveIcon={moveIcon} />
-          </div>
-          {/* Zones sous le widget */}
-          <div className="bottom-zones">
-            {Array.from({ length: 10 }, (_, i) => (
-              <Zone
-                key={`bottom${i + 1}`}
-                zoneId={`bottom${i + 1}`}
-                iconId={zones[`bottom${i + 1}`]}
-                moveIcon={moveIcon}
-              />
-            ))}
+            {/* Zones sous le widget */}
+            <div className="bottom-zones">
+              {Array.from({ length: 10 }, (_, i) => (
+                <Zone
+                  key={`bottom${i + 1}`}
+                  zoneId={`bottom${i + 1}`}
+                  iconId={zones[`bottom${i + 1}`]}
+                  moveIcon={moveIcon}
+                />
+              ))}
+            </div>
           </div>
         </div>
       </div>
