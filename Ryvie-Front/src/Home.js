@@ -70,30 +70,40 @@ const Zone = ({ zoneId, iconId, moveIcon }) => {
   return (
     <div
       ref={drop}
-      className="zone"
-      style={{
-        backgroundColor: isActive ? 'lightgreen' : 'rgba(255, 255, 255, 0.2)',
-      }}
+      className={`zone ${isActive ? 'zone-active' : ''}`}
     >
       {/* Affichage de l'icône si elle est présente */}
       <div className="icon-container">
         {iconId.length > 0 && (
-          <Icon id={iconId[0]} src={images[iconId[0]]} zoneId={zoneId} moveIcon={moveIcon} />
+          <Icon
+            id={iconId[0]}
+            src={images[iconId[0]]}
+            zoneId={zoneId}
+            moveIcon={moveIcon}
+          />
         )}
       </div>
     </div>
   );
 };
 
-// Composant Taskbar
 const Taskbar = () => {
+  // Exemple d'images pour les cercles
+  const taskbarIcons = [
+    images['appstore.jpeg'],
+    images['drive.png'],
+    images['cloud.png'],
+    images['user.png'],
+    images['settings.png'],
+  ];
+
   return (
     <div className="taskbar">
-      <div className="taskbar-circle"></div>
-      <div className="taskbar-circle"></div>
-      <div className="taskbar-circle"></div>
-      <div className="taskbar-circle"></div>
-      <div className="taskbar-circle"></div>
+      {taskbarIcons.map((iconSrc, index) => (
+        <div key={index} className="taskbar-circle">
+          <img src={iconSrc} alt={`Icon ${index}`} />
+        </div>
+      ))}
     </div>
   );
 };
@@ -151,7 +161,7 @@ const Home = () => {
           <Taskbar />
           {/* Ajout de la classe content */}
           <div className="content">
-            <h1 className="title">Bienvenue dans votre Cloud Ryvie</h1>
+            <h1 className="title">Bienvenue dans votre Cloud</h1>
             <div className="main-content">
               {/* Zone à gauche du widget */}
               <Zone zoneId="left" iconId={zones['left']} moveIcon={moveIcon} />
