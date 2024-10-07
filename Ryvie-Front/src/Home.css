@@ -1,0 +1,112 @@
+/* Styles globaux */
+body, html {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+/* Conteneur principal */
+.home-container {
+  position: relative;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+/* Fond bleu */
+.background {
+  background-color: #3e51ff;
+  min-height: 100vh;
+  background-size: cover;
+  background-repeat: repeat;
+  background-position: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 20px;
+}
+
+/* Titre de la page */
+.title {
+  color: white;
+  font-size: 3vw;
+  text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+  margin-bottom: 20px;
+}
+
+/* Widget central */
+.widget {
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 15px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0px 5px 15px rgba(0,0,0,0.3);
+  text-align: center;
+  width: 80%;
+  max-width: 400px;
+}
+
+/* Conteneur des icônes */
+.icon-container {
+  display: grid;
+  grid-template-columns: repeat(3, 100px);
+  grid-gap: 20px;
+  justify-content: center;
+}
+
+/* Styles des icônes */
+.icon {
+  width: 100px;
+  height: 100px;
+  background-color: white;
+  border-radius: 20px;
+  box-shadow: 0px 5px 5px rgba(0,0,0,0.3);
+  background-size: cover;
+  background-position: center;
+  cursor: grab;
+}
+
+/* Effet au survol des icônes */
+.icon:hover {
+  transform: scale(0.95);
+  transition: transform 0.3s;
+}
+
+/* Styles pour le déplacement */
+.icon:active {
+  cursor: grabbing;
+  opacity: 0.5;
+}
+/* ... styles existants ... */
+
+/* Conteneur des zones */
+.zones-container {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+/* Styles pour chaque zone */
+.zone {
+  background-color: rgba(255, 255, 255, 0.2);
+  border: 2px dashed #ccc;
+  padding: 10px;
+  border-radius: 10px;
+  min-width: 150px;
+  min-height: 200px;
+}
+
+.zone-title {
+  text-align: center;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+/* Conteneur des icônes dans une zone */
+.zone .icon-container {
+  display: grid;
+  grid-template-columns: repeat(2, 100px);
+  grid-gap: 10px;
+  justify-content: center;
+}

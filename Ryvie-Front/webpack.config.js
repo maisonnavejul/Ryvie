@@ -10,15 +10,26 @@ module.exports = {
   },
   module: {
     rules: [
+      // Règle pour les fichiers JavaScript
       {
         test: /\.(js|jsx)$/,
         exclude: /node_modules/,
         use: {
           loader: 'babel-loader',
           options: {
-            plugins: [require.resolve('react-refresh/babel')],  // Ajout de React Refresh
+            plugins: [require.resolve('react-refresh/babel')], // Ajout de React Refresh
           },
         },
+      },
+      // Nouvelle règle pour les fichiers CSS
+      {
+        test: /\.css$/,
+        use: ['style-loader', 'css-loader'],
+      },
+      // Règle pour les fichiers images (optionnel, mais souvent nécessaire)
+      {
+        test: /\.(png|jpg|jpeg|gif|svg)$/i,
+        type: 'asset/resource',
       },
     ],
   },
@@ -32,6 +43,6 @@ module.exports = {
     port: 3000,
   },
   plugins: [
-    new ReactRefreshWebpackPlugin(),  // Ajout de React Refresh Plugin
+    new ReactRefreshWebpackPlugin(), // Ajout de React Refresh Plugin
   ],
 };
