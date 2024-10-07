@@ -1,3 +1,5 @@
+// Home.js
+
 import React, { useState } from 'react';
 import './Home.css';
 
@@ -21,12 +23,12 @@ const ItemTypes = {
 };
 
 // Composant pour chaque icône
-const Icon = ({ id, src, index, zoneId, moveIcon }) => {
+const Icon = ({ id, src, zoneId, moveIcon }) => {
   const ref = React.useRef(null);
 
   const [{ isDragging }, drag] = useDrag({
     type: ItemTypes.ICON,
-    item: { id, index, zoneId },
+    item: { id, zoneId },
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
@@ -47,31 +49,37 @@ const Icon = ({ id, src, index, zoneId, moveIcon }) => {
 };
 
 // Composant pour chaque zone
-const Zone = ({ zoneId, icons, moveIcon }) => {
-  const [, drop] = useDrop({
+const Zone = ({ zoneId, iconId, moveIcon }) => {
+  const [{ isOver, canDrop }, drop] = useDrop({
     accept: ItemTypes.ICON,
-    drop: (item, monitor) => {
-      if (item.zoneId !== zoneId) {
+    canDrop: () => true, // Accepte le drop même si la zone est occupée
+    drop: (item) => {
+      if (item.id !== iconId[0] || item.zoneId !== zoneId) {
         moveIcon(item.id, item.zoneId, zoneId);
         item.zoneId = zoneId;
       }
     },
+    collect: (monitor) => ({
+      isOver: monitor.isOver(),
+      canDrop: monitor.canDrop(),
+    }),
   });
 
+  const isActive = canDrop && isOver;
+
   return (
-    <div ref={drop} className="zone">
-      <div className="zone-title">Zone {zoneId}</div>
+    <div
+      ref={drop}
+      className="zone"
+      style={{
+        backgroundColor: isActive ? 'lightgreen' : 'rgba(255, 255, 255, 0.2)',
+      }}
+    >
+      {/* Affichage de l'icône si elle est présente */}
       <div className="icon-container">
-        {icons.map((iconId, index) => (
-          <Icon
-            key={iconId}
-            id={iconId}
-            src={images[iconId]}
-            index={index}
-            zoneId={zoneId}
-            moveIcon={moveIcon}
-          />
-        ))}
+        {iconId.length > 0 && (
+          <Icon id={iconId[0]} src={images[iconId[0]]} zoneId={zoneId} moveIcon={moveIcon} />
+        )}
       </div>
     </div>
   );
@@ -80,15 +88,38 @@ const Zone = ({ zoneId, icons, moveIcon }) => {
 const Home = () => {
   // État pour stocker les icônes dans chaque zone
   const [zones, setZones] = useState({
-    1: Object.keys(images).slice(0, 2), // Zone 1 avec les deux premières icônes
-    2: Object.keys(images).slice(2),    // Zone 2 avec le reste des icônes
+    left: ['appstore.jpeg'], // Application placée par défaut à gauche du widget
+    right: ['drive.png'], // Application placée par défaut à droite du widget
+    bottom1: ['cloud.png'], // Application placée par défaut dans la première zone du bas
+    bottom2: [],
+    bottom3: [],
+    bottom4: [],
+    bottom5: [],
+    bottom6: [],
+    bottom7: [],
+    bottom8: [],
+    bottom9: [],
+    bottom10: [],
+    apps: Object.keys(images).filter(
+      (iconId) => !['appstore.jpeg', 'drive.png', 'cloud.png'].includes(iconId)
+    ), // Applications restantes dans la zone "Applications"
   });
-
 
   const moveIcon = (id, fromZoneId, toZoneId) => {
     setZones((prevZones) => {
       const fromIcons = prevZones[fromZoneId].filter((iconId) => iconId !== id);
-      const toIcons = [...prevZones[toZoneId], id];
+      let toIcons = prevZones[toZoneId];
+
+      if (toIcons.length === 0) {
+        // La zone cible est vide, on y ajoute l'icône
+        toIcons = [id];
+      } else {
+        // La zone cible contient déjà une icône, on l'échange
+        const [existingIconId] = toIcons;
+        toIcons = [id];
+        fromIcons.push(existingIconId);
+      }
+
       return {
         ...prevZones,
         [fromZoneId]: fromIcons,
@@ -100,21 +131,26 @@ const Home = () => {
   return (
     <DndProvider backend={HTML5Backend}>
       <div className="home-container">
-        {/* Contenu de la page */}
         <div className="background">
           <h1 className="title">Bienvenue sur Ryvie</h1>
-          {/* Widget au milieu de la page */}
-          <div className="widget">
-            <h2 className="widget-title">Météo Actuelle</h2>
-            <p className="widget-content">Paris, 15°C, Ensoleillé</p>
+          <div className="main-content">
+            {/* Zone à gauche du widget */}
+            <Zone zoneId="left" iconId={zones['left']} moveIcon={moveIcon} />
+            {/* Widget central */}
+            <div className="widget">
+              <h2 className="widget-title">Météo Actuelle</h2>
+              <p className="widget-content">Paris, 15°C, Ensoleillé</p>
+            </div>
+            {/* Zone à droite du widget */}
+            <Zone zoneId="right" iconId={zones['right']} moveIcon={moveIcon} />
           </div>
-          {/* Zones pour les icônes */}
-          <div className="zones-container">
-            {Object.keys(zones).map((zoneId) => (
+          {/* Zones sous le widget */}
+          <div className="bottom-zones">
+            {Array.from({ length: 10 }, (_, i) => (
               <Zone
-                key={zoneId}
-                zoneId={zoneId}
-                icons={zones[zoneId]}
+                key={`bottom${i + 1}`}
+                zoneId={`bottom${i + 1}`}
+                iconId={zones[`bottom${i + 1}`]}
                 moveIcon={moveIcon}
               />
             ))}
