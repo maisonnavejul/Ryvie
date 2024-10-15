@@ -88,7 +88,6 @@ const Zone = ({ zoneId, iconId, moveIcon }) => {
 };
 
 const Taskbar = () => {
-  // Exemple d'images pour les cercles
   const taskbarIcons = [
     images['appstore.jpeg'],
     images['drive.png'],
@@ -97,16 +96,28 @@ const Taskbar = () => {
     images['settings.png'],
   ];
 
+  // Fonction pour ouvrir Google lorsque l'icône nuage est cliquée
+  const handleClick = (index) => {
+    if (index === 2) { // 2 correspond à l'icône nuage
+      window.open('http://192.168.1.34:3000/', '_blank');
+    }
+  };
+
   return (
     <div className="taskbar">
       {taskbarIcons.map((iconSrc, index) => (
-        <div key={index} className="taskbar-circle">
+        <div 
+          key={index} 
+          className="taskbar-circle"
+          onClick={() => handleClick(index)} // Ajoute un événement de clic
+        >
           <img src={iconSrc} alt={`Icon ${index}`} />
         </div>
       ))}
     </div>
   );
 };
+
 
 const Home = () => {
   // État pour stocker les icônes dans chaque zone
