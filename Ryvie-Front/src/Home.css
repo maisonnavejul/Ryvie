@@ -140,16 +140,6 @@ body, html {
   height: 100%;
 }
 
-/* Ajustement du widget */
-.widget {
-  background: rgba(255, 255, 255, 0.8);
-  border-radius: 15px;
-  padding: 20px;
-  box-shadow: 0px 5px 15px rgba(0,0,0,0.3);
-  text-align: center;
-  width: 300px;
-  max-width: 80%;
-}
 
 /* Styles des icônes */
 .icon {
@@ -211,5 +201,102 @@ body, html {
 .taskbar-circle:hover {
   transform: scale(1.1);
 }
+
+/* Ajustement du widget */
+/* Style pour le widget météo */
+.widget {
+  position: relative;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  border-radius: 25px;
+  box-shadow: 0px 10px 30px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: white;
+  width: 350px;
+  height: 170px;
+  background-clip: padding-box;
+  
+  /* Ajoute une transition pour l'animation de survol */
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Ajoute un effet lorsque le curseur est au-dessus du widget */
+.widget:hover {
+  transform: scale(0.97); /* Augmente légèrement la taille du widget */
+  box-shadow: 0px 15px 35px rgba(0, 0, 0, 0.3); /* Ajoute une ombre plus forte au survol */
+}
+
+.weather-info {
+  position: relative; /* Conteneur pour les éléments positionnés */
+  width: 100%;
+  height: 100%;
+}
+
+.weather-city {
+  font-size: 2em;
+  font-weight: 600;
+  position: absolute; /* Positionnement indépendant */
+  top: 0px; /* Positionnement à 20px du haut */
+  left: 50%;
+  transform: translateX(-50%); /* Centre horizontalement */
+  font-weight: bold;
+  color: #ffffff;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5); /* Ajout d'un ombrage au texte */
+  z-index: 1; /* Garde la ville au-dessus des autres éléments */
+}
+
+.weather-temperature {
+  font-size: 2em;
+  position: absolute;
+  top: 50px; /* Position sous la ville */
+  left: 50%;
+  transform: translateX(-50%);
+  font-weight: bold;
+  color: #ffffff;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5); /* Ajout d'un ombrage au texte */
+  z-index: 1;
+}
+
+.weather-humidity {
+  font-size: 1.2em;
+  font-weight: 300;
+  position: absolute;
+  bottom: 0px; /* Position en bas du widget */
+  left: 50px;
+  transform: translateX(-50%);
+  font-weight: bold;
+  color: #ffffff;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5); /* Ajout d'un ombrage au texte */
+  z-index: 1;
+}
+
+.weather-wind {
+  font-size: 1.2em;
+  position: absolute;
+  bottom: 0px; /* Position encore plus bas */
+  right: 10px;
+  font-weight: bold;
+  color: #ffffff;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5); /* Ajout d'un ombrage au texte */
+  z-index: 1;
+}
+.weather-icon {
+  width: 70px;  /* Taille de l'icône */
+  height: 70px;
+  margin-right: -5px; /* Espace entre l'icône et le texte */
+  vertical-align: middle; /* Alignement au centre du texte */
+}
+
+.weather-humidity, .weather-wind {
+  display: flex; /* Aligne l'icône et le texte en ligne */
+  align-items: center;
+}
+
+
 
 
