@@ -3,7 +3,7 @@ import './Home.css';
 import axios from 'axios';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
-
+import { io } from 'socket.io-client';
 // Fonction pour importer toutes les images du dossier icons
 const importAll = (r) => {
   let images = {};
@@ -142,27 +142,43 @@ const Home = () => {
     icon: 'default.png',
   });
 
+  const [serverStatus, setServerStatus] = useState(false); // Status de la connexion au serveur
+
+  useEffect(() => {
+    const socket = io('http://192.168.1.39:3000'); // Remplacer par l'adresse correcte de votre serveur
+
+    socket.on('status', (data) => {
+      setServerStatus(data.serverStatus);
+    });
+
+    socket.on('disconnect', () => {
+      setServerStatus(false);
+    });
+
+    return () => socket.disconnect();
+  }, []);
+
   useEffect(() => {
     const fetchWeatherData = () => {
       const geoApiUrl = 'http://ip-api.com/json';
-  
+
       axios.get(geoApiUrl).then((response) => {
         const { city, lat, lon } = response.data;
-  
+
         const weatherApiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=temperature_2m,weathercode,relative_humidity_2m,windspeed_10m&timezone=auto`;
-  
+
         axios.get(weatherApiUrl).then((weatherResponse) => {
           const data = weatherResponse.data;
-  
+
           const weatherCode = data.current_weather.weathercode;
           let icon = 'sunny.png';
-  
+
           if (weatherCode >= 1 && weatherCode <= 3) {
             icon = 'cloudy.png';
           } else if (weatherCode === 61 || weatherCode === 63 || weatherCode === 65) {
             icon = 'rainy.png';
           }
-  
+
           setWeather({
             location: city,
             temperature: data.current_weather.temperature,
@@ -184,17 +200,15 @@ const Home = () => {
         });
       });
     };
-  
-    // Appeler la fonction au montage initial
-    fetchWeatherData();
-  
+
+    fetchWeatherData(); // Appeler la fonction au montage initial
+
     // Mettre à jour les données toutes les 5 minutes (300000 ms)
     const intervalId = setInterval(fetchWeatherData, 300000);
-  
-    // Nettoyer l'intervalle lors du démontage du composant
+
     return () => clearInterval(intervalId);
   }, []);
-  
+
   const moveIcon = (id, fromZoneId, toZoneId) => {
     setZones((prevZones) => {
       const fromIcons = prevZones[fromZoneId].filter((iconId) => iconId !== id);
@@ -231,52 +245,45 @@ const Home = () => {
     <DndProvider backend={HTML5Backend}>
       <div className="home-container">
         <div className="background">
+          {/* Indicateur de connexion en haut à gauche */}
+          <div className={`server-status ${serverStatus ? 'connected' : 'disconnected'}`}>
+            {serverStatus ? 'Connected' : 'Disconnected'}
+          </div>
+
           <Taskbar handleClick={handleClick} />
           <div className="content">
             <h1 className="title">Bienvenue dans votre Cloud</h1>
             <div className="main-content">
               <div className="top-zones">
-              <Zone
-                zoneId="left"
-                iconId={zones['left']}
-                moveIcon={moveIcon}
-                handleClick={handleClick}
-              />
+                <Zone
+                  zoneId="left"
+                  iconId={zones['left']}
+                  moveIcon={moveIcon}
+                  handleClick={handleClick}
+                />
               </div>
               <div className="widget" style={{ backgroundImage: `url(${weatherImages[weather.icon]})` }}>
                 <div className="weather-info">
-                  <p className="weather-city">
-                    {weather.location ? weather.location : 'Localisation non disponible'}
-                  </p>
-                  <p className="weather-temperature">
-                    {weather.temperature ? `${Math.round(weather.temperature)}°C` : '...'}
-                  </p>
+                  <p className="weather-city">{weather.location ? weather.location : 'Localisation non disponible'}</p>
+                  <p className="weather-temperature">{weather.temperature ? `${Math.round(weather.temperature)}°C` : '...'}</p>
                   <div className="weather-humidity">
-                    <img
-                      src={weatherIcons['humidity.png']}
-                      alt="Humidity Icon"
-                      className="weather-icon"
-                    />
+                    <img src={weatherIcons['humidity.png']} alt="Humidity Icon" className="weather-icon" />
                     {weather.humidity ? `${weather.humidity}%` : '...'}
                   </div>
                   <div className="weather-wind">
-                    <img
-                      src={weatherIcons['wind.png']}
-                      alt="Wind Icon"
-                      className="weather-icon"
-                    />
+                    <img src={weatherIcons['wind.png']} alt="Wind Icon" className="weather-icon" />
                     {weather.wind ? `${Math.round(weather.wind)} km/h` : '...'}
                   </div>
                 </div>
               </div>
               <div className="top-zones">
-              <Zone
-                zoneId="right"
-                iconId={zones['right']}
-                moveIcon={moveIcon}
-                handleClick={handleClick}
-                className="zone-right"
-              />
+                <Zone
+                  zoneId="right"
+                  iconId={zones['right']}
+                  moveIcon={moveIcon}
+                  handleClick={handleClick}
+                  className="zone-right"
+                />
               </div>
             </div>
             <div className="bottom-zones">
