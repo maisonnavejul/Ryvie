@@ -80,6 +80,9 @@ body, html {
   align-items: center;
   padding-top: 20px;
 }
+.top-zones {
+  padding-top: 40px;
+}
 
 /* Titre de la page */
 .title {
@@ -103,20 +106,26 @@ body, html {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 10px;
+  gap: 30px;
   margin-top: 20px;
 }
 
 /* Styles pour chaque zone */
 .zone {
   background-color: rgba(255, 255, 255, 0.3); /* Fond blanc avec opacité de 80% */
-  padding: 10px;
+  padding: 0px;
   border-radius: 10px;
   width: 100px;
   height: 100px;
   position: relative;
   transition: background-color 0.3s;
 }
+/* Zone spécifique pour "left" et "right" avec un espacement supérieur */
+.zone-left,
+.zone-right {
+  margin-top: 50px; /* Ajuster cette valeur pour descendre davantage */
+}
+
 
 /* Style pour la zone active lors du drag-over */
 .zone-active {
@@ -132,25 +141,32 @@ body, html {
   font-size: 12px;
 }
 
-/* Icônes dans les zones */
-.zone .icon-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100%;
-}
 
-
-/* Styles des icônes */
+/* Icône */
 .icon {
   width: 80px;
   height: 80px;
+  margin-top: 10px;
   background-color: white;
-  border-radius: 15px;
-  box-shadow: 0px 5px 5px rgba(0,0,0,0.3);
+  border-radius: 20px;
+  box-shadow: 0px 5px 5px rgba(0, 0, 0, 0.3);
   background-size: cover;
   background-position: center;
   cursor: grab;
+  z-index: 1; /* Donne une priorité visuelle à l'icône */
+}
+
+/* Nom des icônes */
+.icon-name {
+  position: absolute;
+  bottom: -37px; /* Positionne le nom en dessous de l'icône */
+  left: 50%;
+  transform: translateX(-50%); /* Centre le texte horizontalement */
+  font-size: 16px;
+  color: white;
+  text-align: center;
+  font-weight: bold;
+  z-index: 0; /* Assure que le texte est derrière l'icône */
 }
 
 .icon:hover {
@@ -298,5 +314,30 @@ body, html {
 }
 
 
+/* Conteneur des icônes pour les aligner verticalement */
+.icon-container {
+  display: flex;
+  flex-direction: column; /* Aligne l'icône et le texte verticalement */
+  align-items: center;
+  justify-content: center;
+}
+/* Indicateur de connexion au serveur */
+.server-status {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  font-size: 14px;
+  font-weight: bold;
+  color: white;
+}
 
+.server-status.connected {
+  background-color: green; /* Couleur pour connecté */
+}
+
+.server-status.disconnected {
+  background-color: red; /* Couleur pour déconnecté */
+}
 
