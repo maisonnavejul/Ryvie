@@ -31,27 +31,23 @@ io.on('connection', (socket) => {
   });
 });
 
-// Fonction pour récupérer l'adresse IP locale de la carte réseau Wi-Fi
-function getWifiIP() {
+// Fonction pour récupérer l'adresse IP locale de n'importe quelle interface réseau non interne (Wi-Fi ou Ethernet)
+function getLocalIP() {
   const networkInterfaces = os.networkInterfaces();
   for (const interfaceName in networkInterfaces) {
     const addresses = networkInterfaces[interfaceName];
     for (const addressInfo of addresses) {
       if (addressInfo.family === 'IPv4' && !addressInfo.internal) {
-        // Vérifie si c'est une interface Wi-Fi (généralement "Wi-Fi" ou similaire)
-        if (interfaceName.toLowerCase().includes('wi') || interfaceName.toLowerCase().includes('wifi')) {
-          return addressInfo.address; // Retourne l'adresse IPv4 non interne (Wi-Fi)
-        }
+        // Retourne l'adresse IPv4 non interne, que ce soit Wi-Fi ou Ethernet
+        return addressInfo.address;
       }
     }
   }
-  return 'Wi-Fi IP not found';
+  return 'IP not found';
 }
 
-
-
-// Lance le serveur sur le port 3000
-server.listen(3000, () => {
-  const wifiIP = getWifiIP();
-  console.log(`Server running on http://${wifiIP}:3000`);
+server.listen(3001, () => { 
+  const localIP = getLocalIP();
+  console.log(`Server running on http://${localIP}:3001`); 
 });
+
