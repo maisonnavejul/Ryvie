@@ -4,6 +4,7 @@ const http = require('http'); // Nécessaire pour utiliser le serveur HTTP avec 
 const { Server } = require('socket.io');
 const os = require('os'); // Nécessaire pour récupérer l'adresse IP du Wi-Fi
 
+
 const app = express();
 const server = http.createServer(app); // Crée un serveur HTTP
 const io = new Server(server, {
@@ -46,6 +47,8 @@ function getWifiIP() {
   }
   return 'Wi-Fi IP not found';
 }
+
+
 
 // Lance le serveur sur le port 3000
 server.listen(3000, () => {
