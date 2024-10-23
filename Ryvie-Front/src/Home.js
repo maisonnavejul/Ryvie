@@ -117,7 +117,7 @@ const Taskbar = ({ handleClick }) => {
   const taskbarIcons = [
     images['AppStore.jpeg'],
     images['Drive.png'],
-    images['Cloud.png'],
+    images['rCloud.png'],
     images['user.png'],
     images['settings.png'],
   ];
@@ -142,10 +142,10 @@ const Home = () => {
   const [zones, setZones] = useState({
     left: ['AppStore.jpeg'],
     right: ['Drive.png'],
-    bottom1: ['Cloud.png'],
+    bottom1: ['rCloud.png'],
     bottom2: ['Portainer.png'],
     bottom3: ['Outline.png'],
-    bottom4: [],
+    bottom4: ['rTransfer.png'],
     bottom5: [],
     bottom6: [],
     bottom7: [],
@@ -153,7 +153,7 @@ const Home = () => {
     bottom9: [],
     bottom10: [],
     apps: Object.keys(images).filter(
-      (iconId) => !['AppStore.jpeg', 'Drive.png', 'Cloud.png', 'Outline.png'].includes(iconId)
+      (iconId) => !['AppStore.jpeg', 'Drive.png', 'Cloud.png', 'Outline.png','rTransfer.png'].includes(iconId)
     ),
   });
 
@@ -167,9 +167,10 @@ const Home = () => {
   const [serverStatus, setServerStatus] = useState(false); // Status de la connexion au serveur
 
   const [appStatus, setAppStatus] = useState({
-    'Cloud.png': false,
+    'rCloud.png': false,
     'Portainer.png': false,
     'Outline.png': false,
+    'rTransfer.png': false,
   });
 
   useEffect(() => {
@@ -190,13 +191,15 @@ const Home = () => {
       const isCloudRunning = data.activeContainers.includes('Cloud');
       const isPortainerRunning = data.activeContainers.includes('Portainer');
       const isOutlineRunning = data.activeContainers.includes('outline');
+      const isrTransferRunning = data.activeContainers.includes('pingvin-share-pingvin-share-1');
 
       // Met à jour le statut en temps réel
       setAppStatus((prevStatus) => ({
         ...prevStatus,
-        'Cloud.png': isCloudRunning,
+        'rCloud.png': isCloudRunning,
         'Portainer.png': isPortainerRunning,
         'Outline.png': isOutlineRunning,
+        'rTransfer.png': isrTransferRunning,
       }));
     });
 
@@ -285,7 +288,7 @@ const Home = () => {
   };
 
   const handleClick = (iconId) => {
-    if (iconId === 'Cloud.png') {
+    if (iconId === 'rCloud.png') {
       window.open('http://192.168.1.34:3000/', '_blank');
     }
     if (iconId === 'Portainer.png') {
@@ -293,6 +296,9 @@ const Home = () => {
     }
     if ( iconId === 'Outline.png') {
       window.open('https://192.168.1.34:8443/', '_blank');  
+    }
+    if (iconId === 'rTransfer.png') {
+      window.open('http://192.168.1.34:3002/', '_blank');
     }
   };
 
