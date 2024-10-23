@@ -17,7 +17,7 @@ const importAll = (r) => {
 const images = importAll(require.context('./icons', false, /\.(png|jpe?g|svg)$/));
 const weatherImages = importAll(require.context('./weather_icons', false, /\.(png|jpe?g|svg)$/));
 const weatherIcons = importAll(require.context('./weather_icons', false, /\.(png|jpe?g|svg)$/));
-
+const exceptions = ['AppStore.png','settings.png','user.png'];
 // Types pour react-dnd
 const ItemTypes = {
   ICON: 'icon',
@@ -50,25 +50,27 @@ const Icon = ({ id, src, zoneId, moveIcon, handleClick, showName = true, isActiv
         }}
         onClick={() => handleClick(id)}
       >
-        {/* Pastille de notification */}
-        {id === 'Cloud.png' || id === 'Portainer.png' ? (
-          <div
-            className="status-badge"
-            style={{
-              position: 'absolute',
-              top: '-5px',
-              right: '-5px',
-              width: '16px',
-              height: '16px',
-              borderRadius: '50%',
-              backgroundColor: isActive ? 'green' : 'red',
-              border: '2px solid white', // Pour l'effet de "sur" l'icône comme sur iPhone
-            }}
-          ></div>
-        ) : null}
-      </div>
-      {showName && <p className="icon-name">{id.replace('.jpeg', '').replace('.png', '')}</p>}
-    </div>
+
+{id.endsWith('.png') && !exceptions.includes(id) ? (
+  <div
+    className="status-badge"
+    style={{
+      position: 'absolute',
+      top: '-5px',
+      right: '-5px',
+      width: '16px',
+      height: '16px',
+      borderRadius: '50%',
+      backgroundColor: isActive ? 'green' : 'red',
+      border: '2px solid white', // Pour l'effet de "sur" l'icône comme sur iPhone
+    }}
+  ></div>
+) : null}
+</div>
+{showName && <p className="icon-name">{id.replace('.jpeg', '').replace('.png', '')}</p>}
+</div>
+
+
   );
 };
 
@@ -142,7 +144,7 @@ const Home = () => {
     right: ['Drive.png'],
     bottom1: ['Cloud.png'],
     bottom2: ['Portainer.png'],
-    bottom3: [],
+    bottom3: ['Outline.png'],
     bottom4: [],
     bottom5: [],
     bottom6: [],
@@ -151,7 +153,7 @@ const Home = () => {
     bottom9: [],
     bottom10: [],
     apps: Object.keys(images).filter(
-      (iconId) => !['AppStore.jpeg', 'Drive.png', 'Cloud.png'].includes(iconId)
+      (iconId) => !['AppStore.jpeg', 'Drive.png', 'Cloud.png', 'Outline.png'].includes(iconId)
     ),
   });
 
@@ -167,6 +169,7 @@ const Home = () => {
   const [appStatus, setAppStatus] = useState({
     'Cloud.png': false,
     'Portainer.png': false,
+    'Outline.png': false,
   });
 
   useEffect(() => {
@@ -186,12 +189,14 @@ const Home = () => {
       // Si "Cloud" ou "Portainer" est actif
       const isCloudRunning = data.activeContainers.includes('Cloud');
       const isPortainerRunning = data.activeContainers.includes('Portainer');
+      const isOutlineRunning = data.activeContainers.includes('outline');
 
       // Met à jour le statut en temps réel
       setAppStatus((prevStatus) => ({
         ...prevStatus,
         'Cloud.png': isCloudRunning,
         'Portainer.png': isPortainerRunning,
+        'Outline.png': isOutlineRunning,
       }));
     });
 
@@ -281,10 +286,13 @@ const Home = () => {
 
   const handleClick = (iconId) => {
     if (iconId === 'Cloud.png') {
-      window.open('http://207.180.204.159:8081/app1/', '_blank');
+      window.open('http://192.168.1.34:3000/', '_blank');
     }
     if (iconId === 'Portainer.png') {
       window.open('http://207.180.204.159:8081/app3/', '_blank');
+    }
+    if ( iconId === 'Outline.png') {
+      window.open('https://192.168.1.34:8443/', '_blank');  
     }
   };
 

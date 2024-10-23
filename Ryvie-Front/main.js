@@ -1,9 +1,11 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
+
 // Activer le rechargement automatique du processus principal
 require('electron-reload')(__dirname, {
   electron: path.join(__dirname, 'node_modules', '.bin', 'electron')
 });
+
 app.disableHardwareAcceleration();
 process.env.NODE_ENV = 'development';
 
@@ -11,12 +13,19 @@ let mainWindow;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 1000,
+    height: 700,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: true,
     },
+  });
+
+  // Gestion des erreurs de certificat SSL
+  app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+    // Ignore les erreurs de certificat
+    event.preventDefault();
+    callback(true); // Accepte le certificat non valide
   });
 
   // Si on est en mode développement, charger l'URL du serveur Webpack
@@ -32,7 +41,6 @@ function createWindow() {
   mainWindow.on('closed', function () {
     mainWindow = null;
   });
-  
 }
 
 app.whenReady().then(createWindow);
