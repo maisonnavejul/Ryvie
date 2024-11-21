@@ -4,7 +4,7 @@ import axios from 'axios';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { io } from 'socket.io-client';
-
+import { Link } from 'react-router-dom';
 // Fonction pour importer toutes les images du dossier icons
 const importAll = (r) => {
   let images = {};
@@ -112,7 +112,7 @@ const Zone = ({ zoneId, iconId, moveIcon, handleClick, showName, appStatus }) =>
   );
 };
 
-// Barre des tâches
+
 const Taskbar = ({ handleClick }) => {
   const taskbarIcons = [
     images['AppStore.jpeg'],
@@ -125,17 +125,27 @@ const Taskbar = ({ handleClick }) => {
   return (
     <div className="taskbar">
       {taskbarIcons.map((iconSrc, index) => (
-        <div
-          key={index}
-          className="taskbar-circle"
-          onClick={() => handleClick(Object.keys(images)[index])}
-        >
-          <img src={iconSrc} alt={`Icon ${index}`} />
+        <div key={index} className="taskbar-circle">
+          {index === 3 ? (
+            <Link to="/user">
+              <img src={iconSrc} alt={`Icon ${index}`} />
+            </Link>
+          ) : index === 4 ? (
+            <Link to="/settings">
+              <img src={iconSrc} alt={`Icon ${index}`} />
+            </Link>
+          ) : (
+            <div onClick={() => handleClick(Object.keys(images)[index])}>
+              <img src={iconSrc} alt={`Icon ${index}`} />
+            </div>
+          )}
         </div>
       ))}
     </div>
   );
 };
+    
+
 
 // Composant principal
 const Home = () => {

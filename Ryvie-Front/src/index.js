@@ -2,7 +2,8 @@ import React, { useState } from 'react';  // Utiliser le hook useState pour gér
 import ReactDOM from 'react-dom/client';
 import { HashRouter as Router, Route, Routes, useNavigate } from 'react-router-dom';  // Utiliser useNavigate pour la redirection
 import Home from './Home';  // Importer la page d'accueil
-
+import User from './User';
+import Settings from './Settings';
 // Composant d'accueil avec le bouton de déverrouillage
 const Welcome = () => {
   const navigate = useNavigate();  // Utiliser le hook useNavigate pour la redirection
@@ -28,6 +29,9 @@ const App = () => (
     <Routes>
       <Route path="/" element={<Welcome />} />  {/* Route par défaut avec le message Hello Jules */}
       <Route path="/home" element={<Home />} />  {/* Route pour la page d'accueil */}
+      <Route path="/user" element={<User />} />  {/* Route pour la page de gestion des utilisateurs */}
+      <Route path="/settings" element={<Settings />} />  {/* Route pour la page des paramètres */}
+
     </Routes>
   </Router>
 );
