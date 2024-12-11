@@ -6,7 +6,9 @@ require('electron-reload')(__dirname, {
   electron: path.join(__dirname, 'node_modules', '.bin', 'electron')
 });
 
-app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('disable-software-rasterizer');
+
 process.env.NODE_ENV = 'development';
 
 let mainWindow;
@@ -17,8 +19,11 @@ function createWindow() {
     height: 700,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: true,
-    },
+      contextIsolation: true, // Sépare le contexte de la page et celui de Node.js
+      nodeIntegration: false, // Désactive l'accès direct à Node.js dans la fenêtre
+      enableRemoteModule: false, // Désactive les modules distants
+    }
+    
   });
 
   // Gestion des erreurs de certificat SSL
