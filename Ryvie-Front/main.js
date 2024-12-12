@@ -1,8 +1,6 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const { fork } = require('child_process'); // Importer fork pour les processus enfants
-
-
+const { fork } = require('child_process');
 
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('disable-software-rasterizer');
@@ -10,7 +8,8 @@ app.commandLine.appendSwitch('disable-software-rasterizer');
 process.env.NODE_ENV = 'development';
 
 let mainWindow;
-let udpProcess; // Variable pour stocker le processus enfant
+let udpProcess; // Processus enfant pour l'UDP
+let lastKnownServerIP = null; // Stocker la dernière IP détectée
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -18,10 +17,14 @@ function createWindow() {
     height: 700,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      enableRemoteModule: false,
+      nodeIntegration: false,
     },
   });
-//devtools
-mainWindow.webContents.openDevTools();
+
+  mainWindow.webContents.openDevTools();
+
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:3000');
   } else {
@@ -33,8 +36,6 @@ mainWindow.webContents.openDevTools();
   });
 }
 
-
-
 function startUdpBackend() {
   const udpServerPath = path.join(__dirname, 'udpServer.js');
   udpProcess = fork(udpServerPath);
@@ -42,19 +43,22 @@ function startUdpBackend() {
   udpProcess.on('message', (msg) => {
     if (msg.type === 'ryvie-ip') {
       console.log(`IP détectée dans main.js : ${msg.ip}`);
-      mainWindow.webContents.send('ryvie-ip', msg.ip);
+      lastKnownServerIP = msg.ip; // Mettre à jour l'IP connue
       if (mainWindow) {
-        mainWindow.webContents.send('ryvie-ip', msg.ip);
-        console.log(`IP envoyée au frontend : ${msg.ip}`);
+        mainWindow.webContents.send('ryvie-ip', msg.ip); // Envoyer l'IP au frontend
       }
     }
   });
-  
 
   udpProcess.on('exit', (code) => {
     console.log(`UDP process exited with code ${code}`);
   });
 }
+
+// Répondre aux requêtes pour l'état initial du serveur
+ipcMain.handle('request-initial-server-ip', () => {
+  return lastKnownServerIP; // Retourne la dernière IP connue ou null
+});
 
 app.whenReady().then(() => {
   createWindow();

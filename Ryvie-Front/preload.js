@@ -1,15 +1,21 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-console.log('preload.js chargé');
-
 contextBridge.exposeInMainWorld('electronAPI', {
+  // Écouter les messages d'IP
   onRyvieIP: (callback) => {
-    ipcRenderer.on('ryvie-ip', (event, ip) => {
-      console.log(`IP reçue dans preload.js : ${ip}`);
-      callback(ip);
-    });
+    const listener = (_, ip) => callback(ip);
+    ipcRenderer.on('ryvie-ip', listener);
+    return () => ipcRenderer.removeListener('ryvie-ip', listener); // Retourne une fonction de nettoyage
+  },
+  // Demander l'état initial du serveur
+  requestInitialServerIP: async () => {
+    const ip = await ipcRenderer.invoke('request-initial-server-ip');
+    console.log(`IP initiale reçue dans preload.js : ${ip}`);
+    return ip;
   },
 });
+
+
 
 // Ce script sera chargé avant que la page soit rendue
 window.addEventListener('DOMContentLoaded', () => {
