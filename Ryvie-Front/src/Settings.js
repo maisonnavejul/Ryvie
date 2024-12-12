@@ -1,5 +1,5 @@
 import React from 'react';
-import './Settings.css';
+import './styles/Settings.css';
 import { useNavigate } from 'react-router-dom';
 
 const Settings = () => {

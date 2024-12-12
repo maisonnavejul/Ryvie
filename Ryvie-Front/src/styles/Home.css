@@ -17,7 +17,7 @@ body, html {
 
 /* Fond avec dégradé */
 .background {
-  background: url('./images/background.webp') no-repeat center center fixed;
+  background: url('./background.webp') no-repeat center center fixed;
   min-height: 100vh;
   background-size: cover;
   display: flex;

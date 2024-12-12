@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import './Home.css';
+import './styles/Home.css';
 import axios from 'axios';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';

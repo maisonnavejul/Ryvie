@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import './Welcome.css';
+import './styles/Welcome.css';
 import serverIcon from './icons/lettre-r.png';
 
 const Welcome = () => {
@@ -34,44 +34,54 @@ const Welcome = () => {
 
   return (
     <div className="welcome-body">
-      <div className={`welcome-container ${unlocked ? 'welcome-hidden' : ''}`}>
-        <h1>Hello Jules</h1>
-        <p>Bienvenue sur l'application Ryvie !</p>
-        {loading && !serverIP ? (
-          <>
-            <div className="welcome-loading"></div>
-            <p>Recherche d'un serveur Ryvie en cours...</p>
-          </>
-        ) : serverIP ? (
-          <div className="welcome-server-found">
-            <img src={serverIcon} alt="Server Icon" className="welcome-server-icon" />
-            <div className="welcome-server-info">
-              <p className="welcome-server-text">Votre serveur Ryvie a été trouvé</p>
-              <p className="welcome-server-ip">{serverIP}</p>
-            </div>
+      <div className="welcome-overlay">
+        <div className={`welcome-container ${unlocked ? 'welcome-hidden' : ''}`}>
+          <div className="welcome-text-header">
+          <h1>Bonjour Jules !</h1>
           </div>
-        ) : (
-          <p>Aucun serveur détecté pour le moment.</p>
-        )}
-        <div>
-          <button
-            className="welcome-button"
-            onClick={handleUnlock}
-            disabled={!serverIP}
-          >
-            {serverIP ? 'Déverrouiller' : 'En attente de connexion...'}
-          </button>
-          <button
-            className="welcome-button"
-            onClick={() => navigate('/home')}
-            style={{ marginLeft: '10px' }}
-          >
-            Accéder à mon cloud depuis l'extérieur
-          </button>
+          <p></p>
+          {loading && !serverIP ? (
+  <>
+    <div className="welcome-loading-container">
+      <div className="welcome-loading"></div>
+    </div>
+    <p aria-live="polite">Recherche d'un serveur Ryvie en cours...</p>
+  </>
+) : serverIP ? (
+  <div className="welcome-server-found">
+    <img src={serverIcon} alt="Icône de serveur Ryvie" className="welcome-server-icon" />
+    <div className="welcome-server-info">
+      <p className="welcome-server-text">Votre serveur Ryvie a été trouvé</p>
+      <p className="welcome-server-ip">{serverIP}</p>
+    </div>
+  </div>
+) : (
+  <p>Aucun serveur détecté pour le moment.</p>
+)}
+
+          <div>
+            <button
+              className="welcome-button"
+              onClick={handleUnlock}
+              disabled={!serverIP}
+              aria-label={serverIP ? 'Déverrouiller l\'accès' : 'En attente de connexion...'}
+            >
+              {serverIP ? 'Déverrouiller' : 'En attente de connexion...'}
+            </button>
+            <button
+              className="welcome-button alt-button"
+              onClick={() => navigate('/home')}
+              style={{ marginLeft: '10px' }}
+              aria-label="Accéder au cloud depuis l'extérieur"
+            >
+              Accéder à mon cloud depuis l'extérieur
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
-};
+}
+  
 
 export default Welcome;
