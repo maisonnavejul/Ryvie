@@ -1,26 +1,23 @@
+const dgram = require('dgram');
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const os = require('os');
-const Docker = require('dockerode'); // Nécessaire pour interagir avec Docker
+const Docker = require('dockerode');
 
-const docker = new Docker(); // Crée une instance de Docker
+const docker = new Docker(); // Interagir avec Docker
+const udpServer = dgram.createSocket('udp4'); // Serveur UDP
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
-  }
+    methods: ["GET", "POST"],
+  },
 });
 
-app.use(cors()); 
-
-// Route HTTP simple
-app.get('/', (req, res) => {
-  res.status(200).send('Server is running');
-});
+app.use(cors());
 
 // Correspondances des noms de conteneurs Docker avec des noms personnalisés
 const containerMapping = {
@@ -29,26 +26,19 @@ const containerMapping = {
   // Ajoutez d'autres correspondances ici si nécessaire
 };
 
-// Fonction pour récupérer les noms des conteneurs Docker actifs
+// Fonction pour récupérer les conteneurs Docker actifs
 async function getActiveContainers() {
   return new Promise((resolve, reject) => {
     docker.listContainers((err, containers) => {
-      if (err) {
-        return reject('Erreur lors de la récupération des conteneurs Docker', err);
-      }
+      if (err) return reject(err);
 
-      // Extraire les noms des conteneurs et les mapper aux noms personnalisés
-      const containerNames = containers.map(container => {
-        const containerName = container.Names[0].replace('/', ''); // Retirer le '/' du nom
-
-        // Vérifier si le conteneur correspond à un nom dans la correspondance
+      const containerNames = containers.map((container) => {
+        const containerName = container.Names[0].replace('/', '');
         for (const key in containerMapping) {
           if (containerName.toLowerCase().includes(key)) {
             return containerMapping[key];
           }
         }
-
-        // Retourne le nom original si aucune correspondance n'est trouvée
         return containerName;
       });
 
@@ -57,22 +47,43 @@ async function getActiveContainers() {
   });
 }
 
-// Gérer les connexions WebSocket avec Socket.io
+// Serveur UDP - Diffusion et réponse
+udpServer.on('listening', () => {
+  const address = udpServer.address();
+  console.log(`UDP Server listening on ${address.address}:${address.port}`);
+});
+
+udpServer.on('message', (message, remote) => {
+  console.log(`Received UDP message: ${message} from ${remote.address}:${remote.port}`);
+
+  // Réponse au message de découverte
+  const response = JSON.stringify({
+    message: 'Ryvie device here!',
+    ip: getLocalIP(),
+  });
+  udpServer.send(response, 0, response.length, remote.port, remote.address, (err) => {
+    if (err) console.error(err);
+    else console.log(`Sent response to ${remote.address}:${remote.port}`);
+  });
+});
+
+// Serveur HTTP et WebSocket
+app.get('/', (req, res) => {
+  res.status(200).send('Server is running');
+});
+
 io.on('connection', async (socket) => {
   console.log('Un client est connecté');
   socket.emit('status', { serverStatus: true });
 
-  // Envoyer la liste initiale des conteneurs Docker actifs dès la connexion
   try {
     const activeContainers = await getActiveContainers();
-    console.log('Envoi de la liste actuelle des conteneurs actifs:', activeContainers);
     socket.emit('containers', { activeContainers });
   } catch (err) {
     console.error(err);
     socket.emit('error', { message: 'Erreur lors de la récupération des conteneurs Docker' });
   }
 
-  // Écouter les événements Docker pour détecter les démarrages/arrêts de conteneurs
   docker.getEvents((err, stream) => {
     if (err) {
       console.error('Erreur lors de l\'écoute des événements Docker', err);
@@ -81,17 +92,13 @@ io.on('connection', async (socket) => {
 
     stream.on('data', async (data) => {
       const event = JSON.parse(data.toString());
-
-      // Filtrer uniquement les événements de démarrage ou d'arrêt de conteneur
       if (event.Type === 'container' && (event.Action === 'start' || event.Action === 'stop')) {
-        console.log(`Événement Docker capturé: ${event.Action} pour ${event.Actor.Attributes.name}`);
-
+        console.log(`Événement Docker: ${event.Action} pour ${event.Actor.Attributes.name}`);
         try {
-          // Mettre à jour la liste des conteneurs actifs après chaque événement pertinent
           const updatedActiveContainers = await getActiveContainers();
           socket.emit('containers', { activeContainers: updatedActiveContainers });
         } catch (err) {
-          console.error('Erreur lors de la mise à jour des conteneurs actifs', err);
+          console.error(err);
         }
       }
     });
@@ -102,7 +109,7 @@ io.on('connection', async (socket) => {
   });
 });
 
-// Fonction pour récupérer l'adresse IP locale de n'importe quelle interface réseau non interne (Wi-Fi ou Ethernet)
+// Fonction pour récupérer l'adresse IP locale
 function getLocalIP() {
   const networkInterfaces = os.networkInterfaces();
   for (const interfaceName in networkInterfaces) {
@@ -116,7 +123,13 @@ function getLocalIP() {
   return 'IP not found';
 }
 
-server.listen(3001, () => { 
+// Démarrage des serveurs
+httpServer.listen(3001, () => {
   const localIP = getLocalIP();
-  console.log(`Server running on http://${localIP}:3001`); 
+  console.log(`HTTP Server running on http://${localIP}:3001`);
+});
+
+// Démarrage du serveur UDP
+udpServer.bind(41234, () => {
+  udpServer.setBroadcast(true);
 });
