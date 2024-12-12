@@ -1,3 +1,16 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+console.log('preload.js chargé');
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  onRyvieIP: (callback) => {
+    ipcRenderer.on('ryvie-ip', (event, ip) => {
+      console.log(`IP reçue dans preload.js : ${ip}`);
+      callback(ip);
+    });
+  },
+});
+
 // Ce script sera chargé avant que la page soit rendue
 window.addEventListener('DOMContentLoaded', () => {
     const replaceText = (selector, text) => {
