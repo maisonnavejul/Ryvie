@@ -41,6 +41,7 @@ const User = () => {
   };
 
   return (
+    <div className="user-body">
     <div className="user-container">
       {/* Barre supérieure */}
       <div className="top-bar">
@@ -163,6 +164,8 @@ const User = () => {
         </tbody>
       </table>
     </div>
+    </div>
+    
   );
 };
 

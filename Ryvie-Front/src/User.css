@@ -1,282 +1,281 @@
 /* Style global pour s'assurer que le fond couvre toute la page */
-html, body {
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    background-color: #f9f9f9; /* Couleur de fond */
-    box-sizing: border-box; /* Pour une gestion propre des marges/paddings */
-  }
-  
-  .user-container {
-    font-family: 'Roboto', Arial, sans-serif;
-    color: #333;
-    margin: 0 auto;
-    padding: 20px;
-    background-color: #f9f9f9;
-    max-width: 1200px; /* Limite la largeur pour éviter de toucher les bords */
-    min-height: calc(100vh - 40px); /* Assure que le fond s'étend sur toute la hauteur */
-    box-sizing: border-box;
-  }
-  
-  /* Barre supérieure en lévitation */
-  .top-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 15px 20px;
-    background-color: #499af0;
-    color: white;
-    border-radius: 12px;
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2); /* Ombre pour effet de lévitation */
-    position: sticky;
-    top: 10px;
-    z-index: 1000;
-  }
-  
-  /* Contenu de la barre supérieure */
-  .top-bar-content h1 {
-    margin: 0;
-    font-size: 1.8rem;
-  }
-  
-  .top-bar-content p {
-    margin: 0;
-    font-size: 1rem;
-    opacity: 0.9;
-  }
-  
-  /* Bouton d'ajout */
-  .add-user-btn button {
-    padding: 10px 15px;
-    background-color: #4caf50;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: background-color 0.3s ease, transform 0.2s ease;
-  }
-  
-  .add-user-btn button:hover {
-    background-color: #45a049;
-    transform: scale(1.05);
-  }
-  
-  /* Bouton retour */
-  .back-btn-container {
-    flex-shrink: 0;
-  }
-  
-  .back-btn {
-    padding: 8px 12px;
-    background-color: white;
-    color: #007bff;
-    border: 2px solid white;
-    border-radius: 8px;
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: all 0.3s ease;
-  }
-  
-  .back-btn:hover {
-    background-color: #0056b3;
-    color: white;
-  }
-  
-  /* Espace entre barre et tableau */
-  .user-table {
-    margin-top: 30px; /* Ajout d'un espace entre la barre et le tableau */
-    width: 100%;
-    border-collapse: collapse;
-    background: white;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  
-  .user-table th,
-  .user-table td {
-    padding: 15px;
-    text-align: left;
-    font-size: 1rem;
-  }
-  
-  .user-table th {
-    background-color: #f1f1f1;
-    color: #555;
-    font-weight: bold;
-  }
-  
-  .user-table tr:nth-child(even) {
-    background-color: #f9f9f9;
-  }
-  
-  .user-table tr:hover {
-    background-color: #f1f3f5;
-  }
-  
-  /* Icônes d'action */
-  .action-icon {
-    font-size: 1.2rem;
-    cursor: pointer;
-    margin-right: 10px;
-    transition: transform 0.2s ease, color 0.3s ease;
-  }
-  
-  .action-icon:hover {
-    transform: scale(1.2);
-  }
-  
-  .edit-icon {
-    color: #007bff; /* Bleu pour édition */
-  }
-  
-  .delete-icon {
-    color: #f44336; /* Rouge pour suppression */
-  }
-  
-  /* Sélecteur des rôles */
-  .role-select {
-    padding: 8px;
-    font-size: 0.9rem;
-    border: 1px solid #ddd;
-    border-radius: 15px;
-    background-color: white;
-    transition: background-color 0.3s ease, color 0.3s ease;
-  }
-  
-  /* Couleurs dynamiques des rôles */
-  .role-select.user {
-    color: #007bff; /* Bleu pour User */
-  }
-  
-  .role-select.admin {
-    color: #f44336; /* Rouge pour Admin */
-  }
-  
-  .role-select.guest {
-    color: #808080; /* Gris pour Guest */
-  }
-  
-  /* Panneau modal */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.6); /* Effet sombre */
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-  }
-  
-  .modal-content {
-    background: white;
-    width: 400px;
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
-    position: relative;
-    animation: fadeIn 0.3s ease-in-out;
-    text-align: center;
-  }
-  
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: scale(0.9);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1);
-    }
-  }
-  
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 15px;
-  }
-  
-  .modal-header h2 {
-    margin: 0;
-    font-size: 1.5rem;
-    color: #333;
-  }
-  
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    color: #888;
-    transition: color 0.3s ease;
-  }
-  
-  .close-btn:hover {
-    color: #444;
-  }
-  
-  .modal-body input,
-  .modal-body select {
-    width: 90%;
-    padding: 10px;
-    margin-bottom: 15px;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    font-size: 1rem;
-  }
-  
-  .modal-body .submit-btn {
-    padding: 10px 20px;
-    background-color: #4caf50;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: background-color 0.3s ease, transform 0.2s ease;
-  }
-  
-  .modal-body .submit-btn:hover {
-    background-color: #45a049;
-    transform: scale(1.05);
-  }
-  
-  /* Confirmation de suppression */
-  .modal-actions {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 20px;
-  }
-  
-  .cancel-btn {
-    padding: 10px 20px;
-    background-color: #ccc;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background-color 0.3s ease;
-  }
-  
-  .cancel-btn:hover {
-    background-color: #bbb;
-  }
-  
-  .delete-btn {
-    padding: 10px 20px;
-    background-color: #f44336;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background-color 0.3s ease;
-  }
-  
-  .delete-btn:hover {
-    background-color: #e53935;
-  }
+.user-body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: #f9f9f9; /* Couleur de fond */
+  box-sizing: border-box; /* Pour une gestion propre des marges/paddings */
+}
 
+.user-container {
+  font-family: 'Roboto', Arial, sans-serif;
+  color: #333;
+  margin: 0 auto;
+  padding: 20px;
+  background-color: #f9f9f9;
+  max-width: 1200px; /* Limite la largeur pour éviter de toucher les bords */
+  min-height: calc(100vh - 40px); /* Assure que le fond s'étend sur toute la hauteur */
+  box-sizing: border-box;
+}
+
+/* Barre supérieure en lévitation */
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 15px 20px;
+  background-color: #499af0;
+  color: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2); /* Ombre pour effet de lévitation */
+  position: sticky;
+  top: 10px;
+  z-index: 1000;
+}
+
+/* Contenu de la barre supérieure */
+.top-bar-content h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.top-bar-content p {
+  margin: 0;
+  font-size: 1rem;
+  opacity: 0.9;
+}
+
+/* Bouton d'ajout */
+.add-user-btn button {
+  padding: 10px 15px;
+  background-color: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+.add-user-btn button:hover {
+  background-color: #45a049;
+  transform: scale(1.05);
+}
+
+/* Bouton retour */
+.back-btn-container {
+  flex-shrink: 0;
+}
+
+.back-btn {
+  padding: 8px 12px;
+  background-color: white;
+  color: #007bff;
+  border: 2px solid white;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.back-btn:hover {
+  background-color: #0056b3;
+  color: white;
+}
+
+/* Espace entre barre et tableau */
+.user-table {
+  margin-top: 30px; /* Ajout d'un espace entre la barre et le tableau */
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.user-table th,
+.user-table td {
+  padding: 15px;
+  text-align: left;
+  font-size: 1rem;
+}
+
+.user-table th {
+  background-color: #f1f1f1;
+  color: #555;
+  font-weight: bold;
+}
+
+.user-table tr:nth-child(even) {
+  background-color: #f9f9f9;
+}
+
+.user-table tr:hover {
+  background-color: #f1f3f5;
+}
+
+/* Icônes d'action */
+.action-icon {
+  font-size: 1.2rem;
+  cursor: pointer;
+  margin-right: 10px;
+  transition: transform 0.2s ease, color 0.3s ease;
+}
+
+.action-icon:hover {
+  transform: scale(1.2);
+}
+
+.edit-icon {
+  color: #007bff; /* Bleu pour édition */
+}
+
+.delete-icon {
+  color: #f44336; /* Rouge pour suppression */
+}
+
+/* Sélecteur des rôles */
+.role-select {
+  padding: 8px;
+  font-size: 0.9rem;
+  border: 1px solid #ddd;
+  border-radius: 15px;
+  background-color: white;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Couleurs dynamiques des rôles */
+.role-select.user {
+  color: #007bff; /* Bleu pour User */
+}
+
+.role-select.admin {
+  color: #f44336; /* Rouge pour Admin */
+}
+
+.role-select.guest {
+  color: #808080; /* Gris pour Guest */
+}
+
+/* Panneau modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6); /* Effet sombre */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  width: 400px;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+  position: relative;
+  animation: fadeIn 0.3s ease-in-out;
+  text-align: center;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #333;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #888;
+  transition: color 0.3s ease;
+}
+
+.close-btn:hover {
+  color: #444;
+}
+
+.modal-body input,
+.modal-body select {
+  width: 90%;
+  padding: 10px;
+  margin-bottom: 15px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 1rem;
+}
+
+.modal-body .submit-btn {
+  padding: 10px 20px;
+  background-color: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+.modal-body .submit-btn:hover {
+  background-color: #45a049;
+  transform: scale(1.05);
+}
+
+/* Confirmation de suppression */
+.modal-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 20px;
+}
+
+.cancel-btn {
+  padding: 10px 20px;
+  background-color: #ccc;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.cancel-btn:hover {
+  background-color: #bbb;
+}
+
+.delete-btn {
+  padding: 10px 20px;
+  background-color: #f44336;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.delete-btn:hover {
+  background-color: #e53935;
+}

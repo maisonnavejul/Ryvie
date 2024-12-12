@@ -21,12 +21,28 @@ module.exports = {
           },
         },
       },
-      // Nouvelle règle pour les fichiers CSS
+      // Règle pour les fichiers CSS Modules
+      {
+        test: /\.module\.css$/, // Seuls les fichiers *.module.css seront traités comme CSS Modules
+        use: [
+          'style-loader',
+          {
+            loader: 'css-loader',
+            options: {
+              modules: {
+                localIdentName: '[name]__[local]___[hash:base64:5]', // Génère des classes uniques
+              },
+            },
+          },
+        ],
+      },
+      // Règle pour les fichiers CSS globaux (optionnel)
       {
         test: /\.css$/,
-        use: ['style-loader', 'css-loader'],
+        exclude: /\.module\.css$/, // Exclut les fichiers *.module.css
+        use: ['style-loader', 'css-loader'], // Gère les fichiers CSS globaux
       },
-      // Règle pour les fichiers images (optionnel, mais souvent nécessaire)
+      // Règle pour les fichiers images
       {
         test: /\.(png|jpg|jpeg|gif|svg)$/i,
         type: 'asset/resource',

@@ -1,0 +1,125 @@
+/* Styles encapsulés pour le composant Welcome */
+.welcome-body {
+  margin: 0;
+  background: linear-gradient(135deg, #3b8dff, #1e3e8d);
+  color: #fff;
+  text-align: center;
+  overflow: hidden;
+}
+
+.welcome-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  transition: opacity 0.5s ease-in-out, transform 0.5s ease-in-out;
+}
+
+.welcome-hidden {
+  opacity: 0;
+  transform: translateY(-50px);
+}
+
+.welcome-button {
+  font-size: 1.1rem;
+  padding: 0.8rem 2rem;
+  margin: 0.5rem;
+  border: none;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: all 0.3s ease-in-out;
+  box-shadow: 0px 5px 10px rgba(0, 0, 0, 0.2);
+}
+
+.welcome-button:disabled {
+  background: #bbb;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.welcome-button:not(:disabled) {
+  background: #ffffff;
+  color: #3b8dff;
+}
+
+.welcome-button:not(:disabled):hover {
+  background: #3b8dff;
+  color: #fff;
+  transform: translateY(-3px);
+  box-shadow: 0px 8px 15px rgba(59, 141, 255, 0.4);
+}
+
+.welcome-loading {
+  border: 4px solid rgba(255, 255, 255, 0.2);
+  border-top: 4px solid #fff;
+  border-radius: 50%;
+  width: 60px;
+  height: 60px;
+  animation: spin 1s linear infinite;
+  margin: 20px auto;
+}
+
+.welcome-server-found {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border-radius: 15px;
+  padding: 25px;
+  width: 90%;
+  max-width: 450px;
+  margin: 20px auto;
+  box-shadow: 0px 6px 10px rgba(0, 0, 0, 0.15);
+  transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+.welcome-server-found:hover {
+  transform: translateY(-5px);
+  box-shadow: 0px 10px 20px rgba(0, 0, 0, 0.25);
+}
+
+.welcome-server-icon {
+  width: 60px;
+  height: 60px;
+  margin-right: 20px;
+  border-radius: 10px;
+  background: #e0e0e0;
+}
+
+.welcome-server-info {
+  text-align: left;
+}
+
+.welcome-server-text {
+  font-size: 1.5rem;
+  font-weight: bold;
+  margin: 0;
+  color: #3b8dff;
+}
+
+.welcome-server-ip {
+  font-size: 1.2rem;
+  margin: 10px 0 0;
+  color: #555;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
