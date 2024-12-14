@@ -26,10 +26,13 @@ const containerMapping = {
   // Ajoutez d'autres correspondances ici si nécessaire
 };
 
-// Fonction pour récupérer les conteneurs Docker actifs
-async function getActiveContainers() {
+// Liste des conteneurs actifs maintenue en mémoire
+let activeContainers = [];
+
+// Fonction pour récupérer les conteneurs Docker actifs au démarrage
+async function initializeActiveContainers() {
   return new Promise((resolve, reject) => {
-    docker.listContainers((err, containers) => {
+    docker.listContainers({ all: false }, (err, containers) => {
       if (err) return reject(err);
 
       const containerNames = containers.map((container) => {
@@ -74,38 +77,46 @@ app.get('/', (req, res) => {
 
 io.on('connection', async (socket) => {
   console.log('Un client est connecté');
+
+  // Envoyer le statut du serveur
   socket.emit('status', { serverStatus: true });
-
-  try {
-    const activeContainers = await getActiveContainers();
-    socket.emit('containers', { activeContainers });
-  } catch (err) {
-    console.error(err);
-    socket.emit('error', { message: 'Erreur lors de la récupération des conteneurs Docker' });
-  }
-
-  docker.getEvents((err, stream) => {
-    if (err) {
-      console.error('Erreur lors de l\'écoute des événements Docker', err);
-      return;
-    }
-
-    stream.on('data', async (data) => {
-      const event = JSON.parse(data.toString());
-      if (event.Type === 'container' && (event.Action === 'start' || event.Action === 'stop')) {
-        console.log(`Événement Docker: ${event.Action} pour ${event.Actor.Attributes.name}`);
-        try {
-          const updatedActiveContainers = await getActiveContainers();
-          socket.emit('containers', { activeContainers: updatedActiveContainers });
-        } catch (err) {
-          console.error(err);
-        }
-      }
-    });
-  });
 
   socket.on('disconnect', () => {
     console.log('Client déconnecté');
+  });
+});
+
+// Écouter les événements Docker et mettre à jour la liste des conteneurs
+docker.getEvents((err, stream) => {
+  if (err) {
+    console.error('Erreur lors de l\'écoute des événements Docker', err);
+    return;
+  }
+
+  stream.on('data', (data) => {
+    const event = JSON.parse(data.toString());
+
+    if (event.Type === 'container' && (event.Action === 'start' || event.Action === 'stop')) {
+      console.log(`Événement Docker capté : ${event.Action} pour ${event.Actor.Attributes.name}`);
+
+      const containerName = event.Actor.Attributes.name;
+
+      if (event.Action === 'start') {
+        // Ajouter le conteneur à la liste s'il n'est pas déjà présent
+        if (!activeContainers.includes(containerName)) {
+          activeContainers.push(containerName);
+          console.log(`Conteneur ajouté : ${containerName}`);
+        }
+      } else if (event.Action === 'stop') {
+        // Retirer le conteneur de la liste
+        activeContainers = activeContainers.filter((name) => name !== containerName);
+        console.log(`Conteneur retiré : ${containerName}`);
+      }
+
+      // Envoyer la liste mise à jour aux clients connectés
+      io.emit('containers', { activeContainers });
+      console.log('Liste mise à jour envoyée :', activeContainers);
+    }
   });
 });
 
@@ -123,13 +134,25 @@ function getLocalIP() {
   return 'IP not found';
 }
 
-// Démarrage des serveurs
-httpServer.listen(3001, () => {
-  const localIP = getLocalIP();
-  console.log(`HTTP Server running on http://${localIP}:3001`);
-});
+// Initialisation et démarrage des serveurs
+async function startServer() {
+  try {
+    // Initialiser la liste des conteneurs actifs
+    activeContainers = await initializeActiveContainers();
+    console.log('Liste initialisée des conteneurs actifs :', activeContainers);
 
-// Démarrage du serveur UDP
-udpServer.bind(41234, () => {
-  udpServer.setBroadcast(true);
-});
+    // Démarrer les serveurs
+    httpServer.listen(3001, () => {
+      const localIP = getLocalIP();
+      console.log(`HTTP Server running on http://${localIP}:3001`);
+    });
+
+    udpServer.bind(41234, () => {
+      udpServer.setBroadcast(true);
+    });
+  } catch (err) {
+    console.error('Erreur lors de l\'initialisation du serveur :', err);
+  }
+}
+
+startServer();
