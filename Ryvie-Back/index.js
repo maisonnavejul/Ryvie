@@ -80,12 +80,16 @@ io.on('connection', async (socket) => {
 
   // Envoyer le statut du serveur
   socket.emit('status', { serverStatus: true });
+  console.log('Statut envoyé au client.');
+
+  // Envoyer la liste des conteneurs actifs
+  socket.emit('containers', { activeContainers });
+  console.log('Liste initiale des conteneurs actifs envoyée :', activeContainers);
 
   socket.on('disconnect', () => {
     console.log('Client déconnecté');
   });
 });
-
 // Écouter les événements Docker et mettre à jour la liste des conteneurs
 docker.getEvents((err, stream) => {
   if (err) {
