@@ -35,31 +35,38 @@ const Welcome = () => {
   return (
     <div className="welcome-body">
       <div className="welcome-overlay">
-        <div className={`welcome-container ${unlocked ? 'welcome-hidden' : ''}`}>
-          <div className="welcome-text-header">
+        {/* Texte indépendant dans le rectangle */}
+        <div className="welcome-text-container">
           <h1>Bonjour Jules !</h1>
-          </div>
-          <p></p>
+        </div>
+        {/* Conteneur dynamique pour le contenu */}
+        <div className={`welcome-container ${unlocked ? 'welcome-hidden' : ''}`}>
           {loading && !serverIP ? (
-  <>
-    <div className="welcome-loading-container">
-      <div className="welcome-loading"></div>
-    </div>
-    <p aria-live="polite">Recherche d'un serveur Ryvie en cours...</p>
-  </>
-) : serverIP ? (
-  <div className="welcome-server-found">
-    <img src={serverIcon} alt="Icône de serveur Ryvie" className="welcome-server-icon" />
-    <div className="welcome-server-info">
-      <p className="welcome-server-text">Votre serveur Ryvie a été trouvé</p>
-      <p className="welcome-server-ip">{serverIP}</p>
-    </div>
-  </div>
-) : (
-  <p>Aucun serveur détecté pour le moment.</p>
-)}
-
-          <div>
+            <>
+              <div className="welcome-loading-container">
+                <div className="welcome-loading"></div>
+              </div>
+              <div className="welcome-research-server">
+                <p aria-live="polite">Recherche d'un serveur Ryvie en cours...</p>
+              </div>
+            </>
+          ) : serverIP ? (
+            <div className="welcome-server-found">
+              <img src={serverIcon} alt="Icône de serveur Ryvie" className="welcome-server-icon" />
+              <div className="welcome-server-info">
+                <p className="welcome-server-text">Votre serveur Ryvie a été trouvé</p>
+                <p className="welcome-server-ip">{serverIP}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="welcome-research-server">
+              <p>Aucun serveur détecté pour le moment.</p>
+            </div>
+          )}
+        </div>
+        {/* Boutons intégrés dans le rectangle */}
+        <div className="welcome-buttons-container">
+          <div className="welcome-button-wrapper">
             <button
               className="welcome-button"
               onClick={handleUnlock}
@@ -68,10 +75,11 @@ const Welcome = () => {
             >
               {serverIP ? 'Déverrouiller' : 'En attente de connexion...'}
             </button>
+          </div>
+          <div className="welcome-button-wrapper">
             <button
               className="welcome-button alt-button"
               onClick={() => navigate('/home')}
-              style={{ marginLeft: '10px' }}
               aria-label="Accéder au cloud depuis l'extérieur"
             >
               Accéder à mon cloud depuis l'extérieur
@@ -81,7 +89,12 @@ const Welcome = () => {
       </div>
     </div>
   );
+  
+  
 }
+  
+
+  
   
 
 export default Welcome;

@@ -24,7 +24,7 @@ intervalId = setInterval(sendBroadcast, 2500);
 
 // Écoute des réponses
 client.on('message', (msg, rinfo) => {
-  console.log(`Received response: ${msg} from ${rinfo.address}:${rinfo.port}`);
+  console.log('Received response: ${msg} from ${rinfo.address}:${rinfo.port}');
 
   // Envoyer l'adresse IP au processus principal
   if (process.send) {
@@ -37,3 +37,4 @@ client.on('message', (msg, rinfo) => {
   client.close(); // Fermer le socket UDP
   process.exit(0); // Terminer le processus
 });
+
