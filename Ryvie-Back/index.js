@@ -4,8 +4,9 @@ const http = require('http');
 const { Server } = require('socket.io');
 const os = require('os');
 const Docker = require('dockerode');
+const ldap = require('ldapjs');
 
-const docker = new Docker(); // Interagir avec Docker
+const docker = new Docker();
 const app = express();
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
@@ -21,14 +22,13 @@ app.use(cors());
 const containerMapping = {
   'nextcloud': 'Cloud',
   'portainer': 'Portainer',
-  // Ajoutez d'autres correspondances ici si nécessaire
 };
 
-// Liste des conteneurs actifs maintenue en mémoire
+// Liste des conteneurs actifs
 let activeContainers = [];
 let isServerDetected = false;
 
-// Fonction pour récupérer les conteneurs Docker actifs au démarrage
+// Fonction pour récupérer les conteneurs Docker actifs
 async function initializeActiveContainers() {
   return new Promise((resolve, reject) => {
     docker.listContainers({ all: false }, (err, containers) => {
@@ -72,25 +72,81 @@ docker.getEvents((err, stream) => {
 
   stream.on('data', (data) => {
     const event = JSON.parse(data.toString());
-
     if (event.Type === 'container' && (event.Action === 'start' || event.Action === 'stop')) {
-      console.log(`Événement Docker capté : ${event.Action} pour ${event.Actor.Attributes.name}`);
-
       const containerName = event.Actor.Attributes.name;
-
       if (event.Action === 'start') {
         if (!activeContainers.includes(containerName)) {
           activeContainers.push(containerName);
-          console.log(`Conteneur ajouté : ${containerName}`);
         }
       } else if (event.Action === 'stop') {
         activeContainers = activeContainers.filter((name) => name !== containerName);
-        console.log(`Conteneur retiré : ${containerName}`);
       }
-
       io.emit('containers', { activeContainers });
-      console.log('Liste mise à jour envoyée :', activeContainers);
     }
+  });
+});
+
+// LDAP Configuration
+const ldapConfig = {
+  url: 'ldap://172.19.0.1:389',
+  bindDN: 'cn=read-only,ou=users,dc=example,dc=org',
+  bindPassword: 'Wimereux',
+  searchBase: 'ou=users,dc=example,dc=org',
+  searchFilter: '(objectClass=inetOrgPerson)',
+};
+
+// Route pour récupérer les utilisateurs LDAP
+app.get('/api/users', async (req, res) => {
+  const ldapClient = ldap.createClient({ url: ldapConfig.url });
+
+  ldapClient.bind(ldapConfig.bindDN, ldapConfig.bindPassword, (err) => {
+    if (err) {
+      console.error('Échec de la connexion LDAP :', err);
+      res.status(500).json({ error: 'Échec de la connexion LDAP' });
+      return;
+    }
+
+    const ldapUsers = [];
+    ldapClient.search(
+      ldapConfig.searchBase,
+      { filter: ldapConfig.searchFilter, scope: 'sub', attributes: ['cn', 'uid', 'mail'] },
+      (err, ldapRes) => {
+        if (err) {
+          console.error('Erreur de recherche LDAP :', err);
+          res.status(500).json({ error: 'Erreur de recherche LDAP' });
+          return;
+        }
+
+        ldapRes.on('searchEntry', (entry) => {
+          try {
+            const cn = entry.pojo.attributes.find(attr => attr.type === 'cn')?.values[0] || 'Nom inconnu';
+            const uid = entry.pojo.attributes.find(attr => attr.type === 'uid')?.values[0] || 'UID inconnu';
+            const mail = entry.pojo.attributes.find(attr => attr.type === 'mail')?.values[0] || 'Email inconnu';
+
+            // Exclure l'utilisateur read-only
+            if (uid !== 'read-only') {
+              ldapUsers.push({ name: cn, uid, email: mail });
+            } else {
+              console.log(`Utilisateur exclu : ${uid}`);
+            }
+          } catch (err) {
+            console.error('Erreur lors du traitement de l\'entrée LDAP :', err);
+          }
+        });
+
+        ldapRes.on('end', () => {
+          console.log('Recherche terminée. Utilisateurs trouvés :', ldapUsers);
+          res.json(ldapUsers);
+          ldapClient.unbind();
+        });
+
+        ldapRes.on('error', (err) => {
+          console.error('Erreur pendant la recherche LDAP :', err);
+          res.status(500).json({ error: 'Erreur pendant la recherche LDAP' });
+          ldapClient.unbind();
+        });
+      }
+    );
   });
 });
 
@@ -111,13 +167,8 @@ io.on('connection', async (socket) => {
   socket.emit('containers', { activeContainers });
 
   socket.on('discover', () => {
-    console.log('Message de découverte reçu');
     isServerDetected = true;
-
-    io.emit('server-detected', {
-      message: 'Ryvie server found!',
-      ip: getLocalIP(),
-    });
+    io.emit('server-detected', { message: 'Ryvie server found!', ip: getLocalIP() });
   });
 
   socket.on('disconnect', () => {
@@ -132,8 +183,7 @@ async function startServer() {
     console.log('Liste initialisée des conteneurs actifs :', activeContainers);
 
     httpServer.listen(3001, () => {
-      const localIP = getLocalIP();
-      console.log(`HTTP Server running on http://${localIP}:3001`);
+      console.log(`HTTP Server running on http://${getLocalIP()}:3001`);
     });
   } catch (err) {
     console.error('Erreur lors de l\'initialisation du serveur :', err);
