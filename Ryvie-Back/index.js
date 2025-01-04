@@ -91,11 +91,24 @@ const ldapConfig = {
   url: 'ldap://172.19.0.1:389',
   bindDN: 'cn=read-only,ou=users,dc=example,dc=org',
   bindPassword: 'Wimereux',
-  searchBase: 'ou=users,dc=example,dc=org',
-  searchFilter: '(objectClass=inetOrgPerson)',
+  userSearchBase: 'ou=users,dc=example,dc=org',
+  groupSearchBase: 'ou=users,dc=example,dc=org',
+  userFilter: '(objectClass=inetOrgPerson)',
+  groupFilter: '(objectClass=groupOfNames)',
+  adminGroup: 'cn=admins,ou=users,dc=example,dc=org',
+  userGroup: 'cn=users,ou=users,dc=example,dc=org',
+  guestGroup: 'cn=guests,ou=users,dc=example,dc=org',
 };
 
-// Route pour récupérer les utilisateurs LDAP
+// Fonction pour déterminer le rôle
+function getRole(dn, groupMemberships) {
+  if (groupMemberships.includes(ldapConfig.adminGroup)) return 'Admin';
+  if (groupMemberships.includes(ldapConfig.userGroup)) return 'User';
+  if (groupMemberships.includes(ldapConfig.guestGroup)) return 'Guest';
+  return 'Unknown';
+}
+
+// Endpoint : Récupérer les utilisateurs LDAP
 app.get('/api/users', async (req, res) => {
   const ldapClient = ldap.createClient({ url: ldapConfig.url });
 
@@ -108,8 +121,8 @@ app.get('/api/users', async (req, res) => {
 
     const ldapUsers = [];
     ldapClient.search(
-      ldapConfig.searchBase,
-      { filter: ldapConfig.searchFilter, scope: 'sub', attributes: ['cn', 'uid', 'mail'] },
+      ldapConfig.userSearchBase,
+      { filter: ldapConfig.userFilter, scope: 'sub', attributes: ['cn', 'uid', 'mail', 'dn'] },
       (err, ldapRes) => {
         if (err) {
           console.error('Erreur de recherche LDAP :', err);
@@ -122,12 +135,11 @@ app.get('/api/users', async (req, res) => {
             const cn = entry.pojo.attributes.find(attr => attr.type === 'cn')?.values[0] || 'Nom inconnu';
             const uid = entry.pojo.attributes.find(attr => attr.type === 'uid')?.values[0] || 'UID inconnu';
             const mail = entry.pojo.attributes.find(attr => attr.type === 'mail')?.values[0] || 'Email inconnu';
+            const dn = entry.pojo.objectName;
 
-            // Exclure l'utilisateur read-only
+            // Exclure l'utilisateur `read-only`
             if (uid !== 'read-only') {
-              ldapUsers.push({ name: cn, uid, email: mail });
-            } else {
-              console.log(`Utilisateur exclu : ${uid}`);
+              ldapUsers.push({ dn, name: cn, uid, email: mail });
             }
           } catch (err) {
             console.error('Erreur lors du traitement de l\'entrée LDAP :', err);
@@ -135,21 +147,48 @@ app.get('/api/users', async (req, res) => {
         });
 
         ldapRes.on('end', () => {
-          console.log('Recherche terminée. Utilisateurs trouvés :', ldapUsers);
-          res.json(ldapUsers);
-          ldapClient.unbind();
-        });
+          console.log('Recherche utilisateur terminée. Vérification des rôles...');
+          const roles = {};
 
-        ldapRes.on('error', (err) => {
-          console.error('Erreur pendant la recherche LDAP :', err);
-          res.status(500).json({ error: 'Erreur pendant la recherche LDAP' });
-          ldapClient.unbind();
+          ldapClient.search(
+            ldapConfig.groupSearchBase,
+            { filter: ldapConfig.groupFilter, scope: 'sub', attributes: ['cn', 'member'] },
+            (err, groupRes) => {
+              if (err) {
+                console.error('Erreur lors de la recherche des groupes LDAP :', err);
+                res.status(500).json({ error: 'Erreur lors de la recherche des groupes LDAP' });
+                return;
+              }
+
+              groupRes.on('searchEntry', (groupEntry) => {
+                const groupName = groupEntry.pojo.attributes.find(attr => attr.type === 'cn')?.values[0];
+                const members = groupEntry.pojo.attributes.find(attr => attr.type === 'member')?.values || [];
+
+                members.forEach((member) => {
+                  if (!roles[member]) roles[member] = [];
+                  roles[member].push(groupEntry.pojo.objectName);
+                });
+              });
+
+              groupRes.on('end', () => {
+                console.log('Recherche des groupes terminée.');
+
+                const usersWithRoles = ldapUsers.map(user => ({
+                  ...user,
+                  role: getRole(user.dn, roles[user.dn] || []),
+                }));
+
+                console.log('Utilisateurs avec rôles :', usersWithRoles);
+                res.json(usersWithRoles);
+                ldapClient.unbind();
+              });
+            }
+          );
         });
       }
     );
   });
 });
-
 // Serveur HTTP pour signaler la détection du serveur
 app.get('/status', (req, res) => {
   res.status(200).json({
