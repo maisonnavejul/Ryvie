@@ -1,40 +1,48 @@
-const dgram = require('dgram');
-const client = dgram.createSocket('udp4');
+const io = require('socket.io-client');
 
-client.bind(() => {
-  client.setBroadcast(true); // Activer le mode broadcast
-});
+// Connexion au serveur WebSocket
+const socket = io('http://ryvie.local:3001');
 
-const message = Buffer.from('Who is Ryvie?');
-let intervalId;
+// Envoyer un message de découverte
+socket.emit('discover');
+console.log('Message de découverte envoyé');
 
-// Fonction pour envoyer des messages périodiquement
-function sendBroadcast() {
-  client.send(message, 0, message.length, 41234, '255.255.255.255', (err) => {
-    if (err) {
-      console.error(err);
-    } else {
-      console.log('Broadcast message sent');
-    }
-  });
-}
+// Écouter les réponses pour détecter un serveur
+socket.on('server-detected', (data) => {
+  console.log('Serveur détecté :', data.message, 'IP :', data.ip);
 
-// Envoyer un message toutes les 5 secondes
-intervalId = setInterval(sendBroadcast, 2500);
-
-// Écoute des réponses
-client.on('message', (msg, rinfo) => {
-  console.log('Received response: ${msg} from ${rinfo.address}:${rinfo.port}');
-
-  // Envoyer l'adresse IP au processus principal
+  // Envoyer les informations au processus parent
   if (process.send) {
-    process.send({ type: 'ryvie-ip', ip: rinfo.address });
+    process.send({
+      type: 'ryvie-ip',
+      ip: data.ip,
+      message: data.message,
+    });
   }
-
-  // Arrêter le programme une fois une réponse reçue
-  console.log('Réponse reçue, arrêt de l\'envoi de messages...');
-  clearInterval(intervalId); // Arrêter l'envoi périodique
-  client.close(); // Fermer le socket UDP
-  process.exit(0); // Terminer le processus
 });
 
+// Écouter la liste des conteneurs actifs
+socket.on('containers', (data) => {
+  console.log('Conteneurs actifs :', data.activeContainers);
+
+  // Envoyer les informations au processus parent
+  if (process.send) {
+    process.send({
+      type: 'containers',
+      containers: data.activeContainers,
+    });
+  }
+});
+
+// Écouter le statut du serveur
+socket.on('status', (data) => {
+  console.log('Statut du serveur :', data);
+
+  // Envoyer les informations au processus parent
+  if (process.send) {
+    process.send({
+      type: 'status',
+      status: data,
+    });
+  }
+});

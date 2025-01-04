@@ -27,7 +27,7 @@ const appUrls = {
   'rCloud.png': 'https://user1.rcloud.ryvie.fr',
   'Portainer.png': 'https://user1.portainer.ryvie.fr',
   'Outline.png': 'https://192.168.1.34:8443/',
-  'rTransfer.png': 'https://user1.rtransfer.ryvie.fr',
+  'rTransfer.png': 'https://user1.rtransfer.ryvie.fr/auth/signIn',
 };
 
 // Types pour react-dnd
@@ -393,6 +393,10 @@ const openAppWindow = (url, useOverlay = true) => {
 const handleClick = (iconId) => {
   if (iconId === 'rCloud.png') {
     // Ouvre directement la fenêtre sans overlay
+    openAppWindow(appUrls[iconId], false);
+    return;
+  }
+  if (iconId === 'rTransfer.png') {
     openAppWindow(appUrls[iconId], false);
     return;
   }

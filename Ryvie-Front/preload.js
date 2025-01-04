@@ -1,19 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  // Écouter les messages d'IP
-  onRyvieIP: (callback) => {
-    const listener = (_, ip) => callback(ip);
-    ipcRenderer.on('ryvie-ip', listener);
-    return () => ipcRenderer.removeListener('ryvie-ip', listener); // Retourne une fonction de nettoyage
-  },
-  // Demander l'état initial du serveur
-  requestInitialServerIP: async () => {
-    const ip = await ipcRenderer.invoke('request-initial-server-ip');
-    console.log(`IP initiale reçue dans preload.js : ${ip}`);
-    return ip;
-  },
+  // Récupérer la dernière IP connue
+  requestInitialServerIP: () => ipcRenderer.invoke('request-initial-server-ip'),
+  // Récupérer les conteneurs actifs
+  requestActiveContainers: () => ipcRenderer.invoke('request-active-containers'),
+  // Récupérer le statut du serveur
+  requestServerStatus: () => ipcRenderer.invoke('request-server-status'),
+  // Écouter les événements en temps réel
+  onRyvieIP: (callback) => ipcRenderer.on('ryvie-ip', callback),
+  onContainersUpdated: (callback) => ipcRenderer.on('containers-updated', callback),
+  onServerStatus: (callback) => ipcRenderer.on('server-status', callback),
 });
+
 
 
 

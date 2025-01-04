@@ -8,8 +8,10 @@ app.commandLine.appendSwitch('disable-software-rasterizer');
 process.env.NODE_ENV = 'development';
 
 let mainWindow;
-let udpProcess; // Processus enfant pour l'UDP
+let udpProcess; // Processus enfant pour WebSocket
 let lastKnownServerIP = null; // Stocker la dernière IP détectée
+let activeContainers = []; // Stocker les conteneurs actifs
+let serverStatus = null; // Stocker le statut du serveur
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -40,25 +42,46 @@ function startUdpBackend() {
   const udpServerPath = path.join(__dirname, 'udpServer.js');
   udpProcess = fork(udpServerPath);
 
+  // Écouter les messages du processus WebSocket
   udpProcess.on('message', (msg) => {
+    console.log('Message reçu de udpServer :', msg);
+
     if (msg.type === 'ryvie-ip') {
       console.log(`IP détectée dans main.js : ${msg.ip}`);
-      lastKnownServerIP = msg.ip; // Mettre à jour l'IP connue
+      lastKnownServerIP = msg.ip;
+
       if (mainWindow) {
-        mainWindow.webContents.send('ryvie-ip', msg.ip); // Envoyer l'IP au frontend
+        mainWindow.webContents.send('ryvie-ip', {
+          ip: msg.ip,
+          message: msg.message,
+        });
+      }
+    } else if (msg.type === 'containers') {
+      console.log('Conteneurs mis à jour :', msg.containers);
+      activeContainers = msg.containers;
+
+      if (mainWindow) {
+        mainWindow.webContents.send('containers-updated', activeContainers);
+      }
+    } else if (msg.type === 'status') {
+      console.log('Statut du serveur mis à jour :', msg.status);
+      serverStatus = msg.status;
+
+      if (mainWindow) {
+        mainWindow.webContents.send('server-status', serverStatus);
       }
     }
   });
 
   udpProcess.on('exit', (code) => {
-    console.log(`UDP process exited with code ${code}`);
+    console.log(`UDP/WebSocket process exited with code ${code}`);
   });
 }
 
 // Répondre aux requêtes pour l'état initial du serveur
-ipcMain.handle('request-initial-server-ip', () => {
-  return lastKnownServerIP; // Retourne la dernière IP connue ou null
-});
+ipcMain.handle('request-initial-server-ip', () => lastKnownServerIP);
+ipcMain.handle('request-active-containers', () => activeContainers);
+ipcMain.handle('request-server-status', () => serverStatus);
 
 app.whenReady().then(() => {
   createWindow();

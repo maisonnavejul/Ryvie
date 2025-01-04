@@ -11,17 +11,26 @@ const Welcome = () => {
 
   useEffect(() => {
     console.log('Recherche d\'un serveur Ryvie...');
-    const removeListener = window.electronAPI?.onRyvieIP((ip) => {
-      console.log(`IP reçue dans React : ${ip}`);
-      setServerIP(ip);
+
+    // Fonction de rappel pour traiter les IP reçues
+    const handleServerIP = (_, data) => {
+      console.log(`IP reçue dans React : ${data.ip}`);
+      setServerIP(data.ip);
       setLoading(false);
-    });
+    };
 
-    const timeout = setTimeout(() => setLoading(false), 10000);
+    // Ajouter le gestionnaire d'événements pour 'ryvie-ip'
+    window.electronAPI.onRyvieIP(handleServerIP);
 
+    // Timeout pour arrêter la recherche après 10 secondes
+    const timeout = setTimeout(() => {
+      setLoading(false);
+    }, 10000);
+
+    // Nettoyage de l'effet
     return () => {
-      if (removeListener) removeListener();
-      clearTimeout(timeout);
+      window.electronAPI.onRyvieIP(handleServerIP); // Nettoie l'écouteur
+      clearTimeout(timeout); // Nettoie le timeout
     };
   }, []);
 
@@ -89,12 +98,6 @@ const Welcome = () => {
       </div>
     </div>
   );
-  
-  
-}
-  
-
-  
-  
+};
 
 export default Welcome;
