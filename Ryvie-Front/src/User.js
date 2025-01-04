@@ -8,7 +8,6 @@ const User = () => {
 
   // Liste des utilisateurs récupérée depuis l'API
   const [users, setUsers] = useState([]);
-
   const [formOpen, setFormOpen] = useState(false);
   const [editUser, setEditUser] = useState(null);
   const [newUser, setNewUser] = useState({ name: '', email: '', role: 'User' });
@@ -20,14 +19,13 @@ const User = () => {
   useEffect(() => {
     const fetchUsers = async () => {
       try {
-        const response = await axios.get('http://ryvie.local:3001/api/users');
+        const response = await axios.get('http://ryvie.local:3001/api/users'); // URL de l'API backend
         const ldapUsers = response.data.map((user, index) => ({
           id: index + 1,
           name: user.name || user.uid,
           email: user.email || 'Non défini',
-          role: 'User', // Rôle par défaut
+          role: user.role || 'Unknown',
         }));
-        console.log(ldapUsers);
         setUsers(ldapUsers);
         setLoading(false);
       } catch (err) {
