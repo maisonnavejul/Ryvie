@@ -34,21 +34,28 @@ const Welcome = () => {
     };
   }, []);
 
-  const handleUnlock = () => {
+  const handlePrivateAccess = () => {
+    localStorage.setItem('accessMode', 'private'); // Stocke l'état comme privé
     setUnlocked(true);
     setTimeout(() => {
       navigate('/home');
     }, 500);
   };
-
+  
+  const handlePublicAccess = () => {
+    localStorage.setItem('accessMode', 'public'); // Stocke l'état comme public
+    setUnlocked(true);
+    setTimeout(() => {
+      navigate('/home');
+    }, 500);
+  };
+  
   return (
     <div className="welcome-body">
       <div className="welcome-overlay">
-        {/* Texte indépendant dans le rectangle */}
         <div className="welcome-text-container">
           <h1>Bonjour Jules !</h1>
         </div>
-        {/* Conteneur dynamique pour le contenu */}
         <div className={`welcome-container ${unlocked ? 'welcome-hidden' : ''}`}>
           {loading && !serverIP ? (
             <>
@@ -73,22 +80,21 @@ const Welcome = () => {
             </div>
           )}
         </div>
-        {/* Boutons intégrés dans le rectangle */}
         <div className="welcome-buttons-container">
           <div className="welcome-button-wrapper">
             <button
               className="welcome-button"
-              onClick={handleUnlock}
+              onClick={handlePrivateAccess}
               disabled={!serverIP}
               aria-label={serverIP ? 'Déverrouiller l\'accès' : 'En attente de connexion...'}
             >
-              {serverIP ? 'Déverrouiller' : 'En attente de connexion...'}
+              Accéder à mon cloud depuis chez moi
             </button>
           </div>
           <div className="welcome-button-wrapper">
             <button
               className="welcome-button alt-button"
-              onClick={() => navigate('/home')}
+              onClick={handlePublicAccess}
               aria-label="Accéder au cloud depuis l'extérieur"
             >
               Accéder à mon cloud depuis l'extérieur
@@ -98,6 +104,7 @@ const Welcome = () => {
       </div>
     </div>
   );
-};
 
+  
+} 
 export default Welcome;

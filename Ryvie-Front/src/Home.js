@@ -18,17 +18,9 @@ const importAll = (r) => {
 const images = importAll(require.context('./icons', false, /\.(png|jpe?g|svg)$/));
 const weatherImages = importAll(require.context('./weather_icons', false, /\.(png|jpe?g|svg)$/));
 const weatherIcons = importAll(require.context('./weather_icons', false, /\.(png|jpe?g|svg)$/));
-
 const exceptions = ['AppStore.png','settings.png','user.png'];
 
-// URLs pour chaque icône
-const appUrls = {
-  'AppStore.jpeg': 'https://user1.appstore.ryvie.fr',
-  'rCloud.png': 'https://user1.rcloud.ryvie.fr',
-  'Portainer.png': 'https://user1.portainer.ryvie.fr',
-  'Outline.png': 'https://192.168.1.34:8443/',
-  'rTransfer.png': 'https://user1.rtransfer.ryvie.fr/auth/signIn',
-};
+
 
 // Types pour react-dnd
 const ItemTypes = {
@@ -155,6 +147,7 @@ const Taskbar = ({ handleClick }) => {
 
 // Composant principal
 const Home = () => {
+  const [accessMode, setAccessMode] = useState('private'); 
   const [zones, setZones] = useState({
     left: ['AppStore.jpeg'],
     right: ['Drive.png'],
@@ -173,6 +166,14 @@ const Home = () => {
     ),
   });
 
+  const appUrls = {
+    'AppStore.jpeg': accessMode === 'public' ? 'https://user1.appstore.ryvie.fr' : 'http://192.168.1.34:3000',
+    'rCloud.png': accessMode === 'public' ? 'https://user1.rcloud.ryvie.fr' : 'http://192.168.1.34:8080',
+    'Portainer.png': accessMode === 'public' ? 'https://user1.portainer.ryvie.fr' : 'http://192.168.1.34:9000',
+    'Outline.png': 'https://192.168.1.34:8443/', 
+    'rTransfer.png': accessMode === 'public' ? 'https://user1.rtransfer.ryvie.fr/auth/signIn' : 'http://192.168.1.34:3002',
+  };
+  
   const [weather, setWeather] = useState({
     location: 'Loading...',
     temperature: null,
@@ -190,7 +191,7 @@ const Home = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    const socket = io('http://192.168.1.34:3001'); // Adresse de votre serveur
+    const socket = io('http://ryvie.local:3001'); // Adresse de votre serveur
 
     socket.on('status', (data) => {
       setServerStatus(data.serverStatus);
@@ -270,6 +271,11 @@ const Home = () => {
     fetchWeatherData();
     const intervalId = setInterval(fetchWeatherData, 300000);
     return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    const mode = localStorage.getItem('accessMode') || 'private';
+    setAccessMode(mode);
   }, []);
 
   const moveIcon = (id, fromZoneId, toZoneId) => {

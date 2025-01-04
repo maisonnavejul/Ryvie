@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "axios": "^1.7.7",
+    "ldapjs": "^3.0.7",
     "react": "^18.0.0",
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
