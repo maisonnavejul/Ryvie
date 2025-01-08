@@ -25,8 +25,49 @@ function createWindow() {
     },
   });
 
+  // Personnaliser le User Agent pour la fenêtre principale
+  mainWindow.webContents.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+  );
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('UA final (fenêtre principale) =', mainWindow.webContents.getUserAgent());
+  });
+
+  // Intercepter tous les window.open() du renderer
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    console.log('[setWindowOpenHandler] Intercepted URL:', url);
+
+    // Créer manuellement la nouvelle fenêtre
+    const childWindow = new BrowserWindow({
+      width: 1000,
+      height: 700,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+      }
+    });
+
+    // Appliquer le même user agent
+    childWindow.webContents.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+    );
+
+    childWindow.webContents.on('did-finish-load', () => {
+      console.log('UA final (fenêtre enfant) =', childWindow.webContents.getUserAgent());
+    });
+
+    // Charger l’URL interceptée
+    childWindow.loadURL(url);
+
+    // On empêche Electron de créer la fenêtre par défaut
+    return { action: 'deny' };
+  });
+
+  // Ouvrir DevTools si besoin
   mainWindow.webContents.openDevTools();
 
+  // Charger votre app React
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:3000');
   } else {

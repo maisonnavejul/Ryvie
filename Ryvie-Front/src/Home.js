@@ -302,97 +302,106 @@ const Home = () => {
   };
  // Fonction générique pour ouvrir la nouvelle fenêtre
 // Paramètre useOverlay pour activer/désactiver l'overlay/iframe
+// Fonction générique pour ouvrir la nouvelle fenêtre
+// Paramètre useOverlay pour activer/désactiver l'overlay/iframe
 const openAppWindow = (url, useOverlay = true) => {
-  const newWindow = window.open('', '_blank', 'width=1000,height=700');
-  if (newWindow) {
-    if (!useOverlay) {
-      // Pas d'overlay ni d'iframe, on charge directement l'URL
-      newWindow.location.href = url;
-    } else {
-      // Avec overlay et iframe
-      newWindow.document.write(`
-        <html>
-          <head>
-            <style>
-              body {
-                margin: 0;
-                padding: 0;
-                font-family: Arial, sans-serif;
-                overflow: hidden;
-                position: relative;
-              }
-              .overlay {
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100vw;
-                height: 100vh;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
-                background-color: rgba(0,0,0,0.7);
-                color: white;
-                z-index: 9999;
-                opacity: 1;
-                transition: opacity 0.5s ease;
-              }
-              .overlay.hidden {
-                opacity: 0;
-                pointer-events: none; 
-              }
-              .loading-spinner {
-                width: 50px;
-                height: 50px;
-                border: 5px solid rgba(255, 255, 255, 0.3);
-                border-top-color: #fff;
-                border-radius: 50%;
-                animation: spin 1s linear infinite;
-                margin-bottom: 10px;
-              }
-              @keyframes spin {
-                to {
-                  transform: rotate(360deg);
-                }
-              }
-              iframe {
-                width: 100vw;
-                height: 100vh;
-                border: none;
-              }
-            </style>
-          </head>
-          <body>
-            <div class="overlay">
-              <div class="loading-spinner"></div>
-              <p>Chargement en cours...</p>
-            </div>
-            <iframe src="${url}"></iframe>
-            <script>
-              const iframe = document.querySelector('iframe');
-              const overlay = document.querySelector('.overlay');
-  
-              let loaded = false;
-              // Si après 2s pas de load => page bloquée, on redirige
-              const timeout = setTimeout(() => {
-                if (!loaded) {
-                  window.location.href = "${url}";
-                }
-              }, 2000);
-  
-              iframe.addEventListener('load', () => {
-                loaded = true;
-                clearTimeout(timeout);
-                overlay.classList.add('hidden');
-              });
-            </script>
-          </body>
-        </html>
-      `);
-      newWindow.document.close();
-    }
+  // 1) Si on ne veut pas d'overlay, on ouvre la VRAIE URL directement
+  if (!useOverlay) {
+    window.open(url, '_blank', 'width=1000,height=700');
+    return;
+  }
+  else {
+    window.open(url, '_blank', 'width=1000,height=700');
   }
 };
+
+  // 2) Sinon, on ouvre "about:blank", puis on injecte l'overlay + iframe
+  /*const newWindow = window.open('', '_blank', 'width=1000,height=700');
+  if (newWindow) {
+    newWindow.document.write(`
+      <html>
+        <head>
+          <style>
+            body {
+              margin: 0;
+              padding: 0;
+              font-family: Arial, sans-serif;
+              overflow: hidden;
+              position: relative;
+            }
+            .overlay {
+              position: absolute;
+              top: 0;
+              left: 0;
+              width: 100vw;
+              height: 100vh;
+              display: flex;
+              flex-direction: column;
+              justify-content: center;
+              align-items: center;
+              background-color: rgba(0,0,0,0.7);
+              color: white;
+              z-index: 9999;
+              opacity: 1;
+              transition: opacity 0.5s ease;
+            }
+            .overlay.hidden {
+              opacity: 0;
+              pointer-events: none; 
+            }
+            .loading-spinner {
+              width: 50px;
+              height: 50px;
+              border: 5px solid rgba(255, 255, 255, 0.3);
+              border-top-color: #fff;
+              border-radius: 50%;
+              animation: spin 1s linear infinite;
+              margin-bottom: 10px;
+            }
+            @keyframes spin {
+              to {
+                transform: rotate(360deg);
+              }
+            }
+            iframe {
+              width: 100vw;
+              height: 100vh;
+              border: none;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="overlay">
+            <div class="loading-spinner"></div>
+            <p>Chargement en cours...</p>
+          </div>
+          <iframe src="${url}"></iframe>
+          <script>
+            const iframe = document.querySelector('iframe');
+            const overlay = document.querySelector('.overlay');
+  
+            let loaded = false;
+            // Si après 2s pas de load => page bloquée, on redirige
+            const timeout = setTimeout(() => {
+              if (!loaded) {
+                window.location.href = "${url}";
+              }
+            }, 2000);
+  
+            iframe.addEventListener('load', () => {
+              loaded = true;
+              clearTimeout(timeout);
+              overlay.classList.add('hidden');
+            });
+          </script>
+        </body>
+      </html>
+    `);
+    newWindow.document.close();
+  }
+};
+
+*/
 
 // handleClick utilise maintenant le même openAppWindow pour rCloud, 
 // mais sans l'overlay (useOverlay = false)
