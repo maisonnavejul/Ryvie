@@ -155,7 +155,7 @@ const Home = () => {
     bottom2: ['Portainer.png'],
     bottom3: ['Outline.png'],
     bottom4: ['rTransfer.png'],
-    bottom5: [],
+    bottom5: ['rDrop.png'],
     bottom6: [],
     bottom7: [],
     bottom8: [],
@@ -172,6 +172,7 @@ const Home = () => {
     'Portainer.png': accessMode === 'public' ? 'https://user1.portainer.ryvie.fr' : 'http://192.168.1.34:9000',
     'Outline.png': 'https://192.168.1.34:8443/', 
     'rTransfer.png': accessMode === 'public' ? 'https://user1.rtransfer.ryvie.fr/auth/signIn' : 'http://192.168.1.34:3002',
+    'rDrop.png': accessMode === 'public' ? 'https://user1.rdrop.ryvie.fr' : 'http://ryvie.local:8081',
   };
   
   const [weather, setWeather] = useState({
@@ -207,6 +208,7 @@ const Home = () => {
       const isPortainerRunning = data.activeContainers.includes('Portainer');
       const isOutlineRunning = data.activeContainers.includes('outline');
       const isrTransferRunning = data.activeContainers.includes('pingvin-share-pingvin-share-1');
+      const isDropRunning = data.activeContainers.includes('snapdrop-nginx-1');
 
       setAppStatus((prevStatus) => ({
         ...prevStatus,
@@ -214,6 +216,7 @@ const Home = () => {
         'Portainer.png': isPortainerRunning,
         'Outline.png': isOutlineRunning,
         'rTransfer.png': isrTransferRunning,
+        'rDrop.png': isDropRunning,
       }));
     });
 
