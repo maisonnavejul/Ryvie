@@ -148,53 +148,57 @@ const User = () => {
         )}
 
         {/* Tableau des utilisateurs */}
-        <table className="user-table">
-          <thead>
-            <tr>
-              <th>Nom</th>
-              <th>Email</th>
-              <th>Rôle</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((user) => (
-              <tr key={user.id}>
-                <td>{user.name}</td>
-                <td>{user.email}</td>
-                <td>
-                  <select
-                    value={user.role}
-                    onChange={(e) => handleRoleChange(user.id, e.target.value)}
-                    className={`role-select ${user.role.toLowerCase()}`}
-                  >
-                    <option value="User">User</option>
-                    <option value="Admin">Admin</option>
-                    <option value="Guest">Guest</option>
-                  </select>
-                </td>
-                <td>
-                  <span
-                    className="action-icon edit-icon"
-                    onClick={() => {
-                      setEditUser(user);
-                      setNewUser(user);
-                      setFormOpen(true);
-                    }}
-                  >
-                    ✏️
-                  </span>
-                  <span
-                    className="action-icon delete-icon"
-                    onClick={() => setConfirmDelete(user)}
-                  >
-                    🗑️
-                  </span>
-                </td>
+        <div className="table-container">
+          <table className="user-table">
+            <thead>
+              <tr>
+                <th>Nom</th>
+                <th>Email</th>
+                <th>Rôle</th>
+                <th>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.id}>
+                  <td title={user.name}>{user.name}</td>
+                  <td title={user.email}>{user.email}</td>
+                  <td>
+                    <select
+                      value={user.role}
+                      onChange={(e) => handleRoleChange(user.id, e.target.value)}
+                      className={`role-select ${user.role.toLowerCase()}`}
+                    >
+                      <option value="User">User</option>
+                      <option value="Admin">Admin</option>
+                      <option value="Guest">Guest</option>
+                    </select>
+                  </td>
+                  <td>
+                    <span
+                      className="action-icon edit-icon"
+                      onClick={() => {
+                        setEditUser(user);
+                        setNewUser(user);
+                        setFormOpen(true);
+                      }}
+                      title="Modifier"
+                    >
+                      ✏️
+                    </span>
+                    <span
+                      className="action-icon delete-icon"
+                      onClick={() => setConfirmDelete(user)}
+                      title="Supprimer"
+                    >
+                      🗑️
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
