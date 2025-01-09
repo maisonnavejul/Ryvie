@@ -9,21 +9,89 @@ body, html {
 
 /* Conteneur principal */
 .home-container {
-  position: relative;
   min-height: 100vh;
+  width: 100%;
   margin: 0;
   padding: 0;
+  background: linear-gradient(135deg, #f5f5f5 0%, #e0e9ff 100%);
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  opacity: 0;
+  animation: zoomFromOverlay 0.8s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+  perspective: 3000px;
+  transform-style: preserve-3d;
+  overflow: hidden;
+  will-change: transform, opacity, filter;
+}
+
+.home-container::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  right: -50%;
+  bottom: -50%;
+  background: linear-gradient(135deg, #f5f5f5 0%, #e0e9ff 100%);
+  transform-style: preserve-3d;
+  z-index: -1;
+  will-change: transform;
+  animation: backgroundPull 0.8s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+}
+
+@keyframes zoomFromOverlay {
+  0% {
+    opacity: 0;
+    transform: translateZ(-2000px) scale(0.2);
+    filter: blur(20px) brightness(0.3);
+  }
+  100% {
+    opacity: 1;
+    transform: translateZ(0) scale(1);
+    filter: blur(0) brightness(1);
+  }
+}
+
+@keyframes backgroundPull {
+  0% {
+    transform: translateZ(-1500px) scale(1.5);
+  }
+  100% {
+    transform: translateZ(0) scale(1);
+  }
 }
 
 /* Fond avec dégradé */
 .background {
-  background: url('./background.webp') no-repeat center center fixed;
+  position: relative;
   min-height: 100vh;
+  padding: 20px;
+  box-sizing: border-box;
+  background: url('./background.webp') no-repeat center center fixed;
   background-size: cover;
   display: flex;
   flex-direction: row; /* Pour aligner la barre des tâches et le contenu */
   position: relative; /* Nécessaire pour le pseudo-élément ::before */
   z-index: 0;
+  transform-style: preserve-3d;
+  opacity: 0;
+  will-change: transform, opacity, filter;
+  animation: contentFadeIn 0.6s cubic-bezier(0.23, 1, 0.32, 1) 0.4s forwards;
+}
+
+@keyframes contentFadeIn {
+  0% {
+    opacity: 0;
+    transform: translateZ(-100px) translateY(20px);
+    filter: blur(5px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateZ(0) translateY(0);
+    filter: blur(0);
+  }
 }
 
 /* Overlay pour réduire la visibilité de l'image de fond */
@@ -38,7 +106,6 @@ body, html {
   pointer-events: none; /* Pour que l'overlay ne bloque pas les interactions */
   z-index: -1; /* Ajouté pour placer l'overlay derrière le contenu */
 }
-
 
 /* Barre des tâches sur le côté gauche */
 .taskbar {
@@ -60,11 +127,21 @@ body, html {
 .taskbar-circle {
   width: 60px;
   height: 60px;
-  background-color: white;
+  background-color: transparent; /* Nous rendons le fond transparent */
   border-radius: 50%;
-  box-shadow: 0px 5px 5px rgba(0,0,0,0.3);
+  box-shadow: 0px 5px 5px rgba(0, 0, 0, 0.3);
   cursor: pointer;
   transition: transform 0.3s;
+  overflow: hidden; /* Pour que l'image ne dépasse pas du cercle */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.taskbar-circle img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover; /* Pour que l'image couvre tout le cercle */
 }
 
 .taskbar-circle:hover {
@@ -126,7 +203,6 @@ body, html {
   margin-top: 50px; /* Ajuster cette valeur pour descendre davantage */
 }
 
-
 /* Style pour la zone active lors du drag-over */
 .zone-active {
   background-color: rgb(38, 134, 243,0.85);
@@ -140,7 +216,6 @@ body, html {
   font-weight: bold;
   font-size: 12px;
 }
-
 
 /* Icône */
 .icon {
@@ -191,31 +266,6 @@ body, html {
   margin-top: 10px;
   font-size: 1.5vw;
   color: #555;
-}
-
-/* Cercles dans la barre des tâches */
-.taskbar-circle {
-  width: 60px;
-  height: 60px;
-  background-color: transparent; /* Nous rendons le fond transparent */
-  border-radius: 50%;
-  box-shadow: 0px 5px 5px rgba(0, 0, 0, 0.3);
-  cursor: pointer;
-  transition: transform 0.3s;
-  overflow: hidden; /* Pour que l'image ne dépasse pas du cercle */
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.taskbar-circle img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover; /* Pour que l'image couvre tout le cercle */
-}
-
-.taskbar-circle:hover {
-  transform: scale(1.1);
 }
 
 /* Ajustement du widget */
@@ -313,7 +363,6 @@ body, html {
   align-items: center;
 }
 
-
 /* Conteneur des icônes pour les aligner verticalement */
 .icon-container {
   display: flex;
@@ -340,4 +389,3 @@ body, html {
 .server-status.disconnected {
   background-color: red; /* Couleur pour déconnecté */
 }
-

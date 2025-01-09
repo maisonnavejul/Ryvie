@@ -46,19 +46,19 @@ const Welcome = () => {
   }, []);
 
   const handlePrivateAccess = () => {
-    localStorage.setItem('accessMode', 'private'); // Stocke l'état comme privé
+    localStorage.setItem('accessMode', 'private');
     setUnlocked(true);
     setTimeout(() => {
       navigate('/home');
-    }, 500);
+    }, 50);
   };
   
   const handlePublicAccess = () => {
-    localStorage.setItem('accessMode', 'public'); // Stocke l'état comme public
+    localStorage.setItem('accessMode', 'public');
     setUnlocked(true);
     setTimeout(() => {
       navigate('/home');
-    }, 500);
+    }, 50);
   };
   
   return (
