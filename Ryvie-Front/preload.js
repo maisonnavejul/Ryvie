@@ -1,3 +1,21 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  // Récupérer la dernière IP connue
+  requestInitialServerIP: () => ipcRenderer.invoke('request-initial-server-ip'),
+  // Récupérer les conteneurs actifs
+  requestActiveContainers: () => ipcRenderer.invoke('request-active-containers'),
+  // Récupérer le statut du serveur
+  requestServerStatus: () => ipcRenderer.invoke('request-server-status'),
+  // Écouter les événements en temps réel
+  onRyvieIP: (callback) => ipcRenderer.on('ryvie-ip', callback),
+  onContainersUpdated: (callback) => ipcRenderer.on('containers-updated', callback),
+  onServerStatus: (callback) => ipcRenderer.on('server-status', callback),
+});
+
+
+
+
 // Ce script sera chargé avant que la page soit rendue
 window.addEventListener('DOMContentLoaded', () => {
     const replaceText = (selector, text) => {

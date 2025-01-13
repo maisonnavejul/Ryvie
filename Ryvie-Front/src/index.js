@@ -1,17 +1,22 @@
 import React from 'react';
-import ReactDOM from 'react-dom/client'; // Assure-toi d'importer depuis 'react-dom/client'
+import ReactDOM from 'react-dom/client';
+import { HashRouter as Router, Route, Routes } from 'react-router-dom';
+import Home from './Home';
+import User from './User';
+import Settings from './Settings';
+import Welcome from './welcome'; // Import du composant Welcome
 
-// Crée ton composant principal
 const App = () => (
-  <div>
-    <h1>Bienvenue dans mon app Electron avec React 18</h1>
-    <p>Ceci est une interface construite avec la nouvelle API de React 18.</p>
-  </div>
+  <Router>
+    <Routes>
+      <Route path="/" element={<Welcome />} />
+      <Route path="/home" element={<Home />} />
+      <Route path="/user" element={<User />} />
+      <Route path="/settings" element={<Settings />} />
+    </Routes>
+  </Router>
 );
 
-// Sélectionner l'élément DOM où l'application React sera rendue
 const rootElement = document.getElementById('root');
-
-// Utiliser createRoot au lieu de ReactDOM.render
 const root = ReactDOM.createRoot(rootElement);
 root.render(<App />);
