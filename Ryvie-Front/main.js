@@ -30,19 +30,58 @@ function createWindowForUser(userId) {
       contextIsolation: true,
       enableRemoteModule: false,
       nodeIntegration: false,
-      partition: `persist:${userId}` // Utiliser la partition ici au lieu de l'objet session
+      partition: `persist:${userId}` // Utiliser la partition ici pour l'utilisateur
     },
   });
 
-  // Personnaliser le User Agent
+  // Personnaliser le User Agent pour la fenêtre principale
   window.webContents.setUserAgent(
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
   );
 
+  window.webContents.on('did-finish-load', () => {
+    console.log('UA final (fenêtre principale) =', window.webContents.getUserAgent());
+  });
+
+  // Intercepter tous les window.open() du renderer
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    console.log('[setWindowOpenHandler] Intercepted URL:', url);
+
+    // Créer manuellement la nouvelle fenêtre
+    const childWindow = new BrowserWindow({
+      width: 1000,
+      height: 700,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        partition: `persist:${userId}` // Utiliser la même partition pour l'enfant
+      }
+    });
+
+    // Appliquer le même user agent
+    childWindow.webContents.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+    );
+
+    childWindow.webContents.on('did-finish-load', () => {
+      console.log('UA final (fenêtre enfant) =', childWindow.webContents.getUserAgent());
+    });
+
+    // Charger l’URL interceptée
+    childWindow.loadURL(url);
+
+    // On empêche Electron de créer la fenêtre par défaut
+    return { action: 'deny' };
+  });
+
   window.loadURL(process.env.NODE_ENV === 'development'
     ? 'http://localhost:3000'
-    : `file://${path.join(__dirname, 'dist/index.html')}`
-  );
+    : `file://${path.join(__dirname, 'dist/index.html')}`);
+
+  // Ouvrir DevTools si besoin
+  if (process.env.NODE_ENV === 'development') {
+    window.webContents.openDevTools();
+  }
 
   userWindows.set(userId, window);
   return window;
@@ -131,7 +170,9 @@ function createWindow() {
   });
 
   // Ouvrir DevTools si besoin
-  mainWindow.webContents.openDevTools();
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.webContents.openDevTools();
+  }
 
   // Charger votre app React
   if (process.env.NODE_ENV === 'development') {
