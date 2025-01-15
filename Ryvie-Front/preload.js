@@ -11,21 +11,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onRyvieIP: (callback) => ipcRenderer.on('ryvie-ip', callback),
   onContainersUpdated: (callback) => ipcRenderer.on('containers-updated', callback),
   onServerStatus: (callback) => ipcRenderer.on('server-status', callback),
+
+  // Nouvelles fonctions pour la gestion des sessions utilisateur
+  invoke: (channel, ...args) => {
+    const validChannels = ['create-user-window', 'clear-user-session'];
+    if (validChannels.includes(channel)) {
+      return ipcRenderer.invoke(channel, ...args);
+    }
+    throw new Error(`Channel "${channel}" is not allowed`);
+  }
 });
-
-
-
 
 // Ce script sera chargé avant que la page soit rendue
 window.addEventListener('DOMContentLoaded', () => {
-    const replaceText = (selector, text) => {
-      const element = document.getElementById(selector);
-      if (element) element.innerText = text;
-    }
-  
-    // Remplacer les versions dans la page par les versions des dépendances
-    for (const type of ['chrome', 'node', 'electron']) {
-      replaceText(`${type}-version`, process.versions[type]);
-    }
-  });
-  
+  const replaceText = (selector, text) => {
+    const element = document.getElementById(selector);
+    if (element) element.innerText = text;
+  }
+
+  // Remplacer les versions dans la page par les versions des dépendances
+  for (const type of ['chrome', 'node', 'electron']) {
+    replaceText(`${type}-version`, process.versions[type]);
+  }
+});

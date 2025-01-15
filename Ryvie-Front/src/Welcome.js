@@ -50,7 +50,7 @@ const Welcome = () => {
     setUnlocked(true);
     setTimeout(() => {
       navigate('/home');
-    }, 50);
+    }, 10);
   };
   
   const handlePublicAccess = () => {
@@ -58,7 +58,7 @@ const Welcome = () => {
     setUnlocked(true);
     setTimeout(() => {
       navigate('/home');
-    }, 50);
+    }, 10);
   };
   
   return (

@@ -128,7 +128,7 @@ const Taskbar = ({ handleClick }) => {
       {taskbarIcons.map((iconSrc, index) => (
         <div key={index} className="taskbar-circle">
           {index === 3 ? (
-            <Link to="/user">
+            <Link to="/login">
               <img src={iconSrc} alt={`Icon ${index}`} />
             </Link>
           ) : index === 4 ? (

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
 const { fork } = require('child_process');
 
@@ -12,6 +12,72 @@ let udpProcess; // Processus enfant pour WebSocket
 let lastKnownServerIP = null; // Stocker la dernière IP détectée
 let activeContainers = []; // Stocker les conteneurs actifs
 let serverStatus = null; // Stocker le statut du serveur
+
+// Stocker les sessions et fenêtres par utilisateur
+const userWindows = new Map();
+const userSessions = new Map();
+
+function createWindowForUser(userId) {
+  // Créer une session persistante pour l'utilisateur
+  const userSession = session.fromPartition(`persist:${userId}`);
+  userSessions.set(userId, userSession);
+
+  const window = new BrowserWindow({
+    width: 1000,
+    height: 700,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      enableRemoteModule: false,
+      nodeIntegration: false,
+      partition: `persist:${userId}` // Utiliser la partition ici au lieu de l'objet session
+    },
+  });
+
+  // Personnaliser le User Agent
+  window.webContents.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+  );
+
+  window.loadURL(process.env.NODE_ENV === 'development'
+    ? 'http://localhost:3000'
+    : `file://${path.join(__dirname, 'dist/index.html')}`
+  );
+
+  userWindows.set(userId, window);
+  return window;
+}
+
+// Gérer la création de fenêtre pour un utilisateur spécifique
+ipcMain.handle('create-user-window', async (event, userId) => {
+  if (userWindows.has(userId)) {
+    const existingWindow = userWindows.get(userId);
+    if (!existingWindow.isDestroyed()) {
+      existingWindow.focus();
+      return;
+    }
+  }
+  
+  const window = createWindowForUser(userId);
+  return true;
+});
+
+// Nettoyer la session d'un utilisateur
+ipcMain.handle('clear-user-session', async (event, userId) => {
+  if (userSessions.has(userId)) {
+    const session = userSessions.get(userId);
+    await session.clearStorageData();
+    userSessions.delete(userId);
+  }
+  
+  if (userWindows.has(userId)) {
+    const window = userWindows.get(userId);
+    if (!window.isDestroyed()) {
+      window.close();
+    }
+    userWindows.delete(userId);
+  }
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -125,7 +191,8 @@ ipcMain.handle('request-active-containers', () => activeContainers);
 ipcMain.handle('request-server-status', () => serverStatus);
 
 app.whenReady().then(() => {
-  createWindow();
+  // Créer la fenêtre principale avec la session de Jules par défaut
+  mainWindow = createWindowForUser('jules');
   startUdpBackend();
 });
 
@@ -140,6 +207,6 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    mainWindow = createWindowForUser('jules');
   }
 });
