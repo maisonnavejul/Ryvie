@@ -82,7 +82,7 @@ const Welcome = () => {
               <img src={serverIcon} alt="Icône de serveur Ryvie" className="welcome-server-icon" />
               <div className="welcome-server-info">
                 <p className="welcome-server-text">Connexion Ryvie établie</p>
-                <p className="welcome-server-ip">{serverIP}</p>
+                <p className="welcome-server-ip">ryvie.local</p>
               </div>
             </div>
           ) : (

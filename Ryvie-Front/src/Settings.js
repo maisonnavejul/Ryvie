@@ -7,12 +7,12 @@ const Settings = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
-    storageUsed: 0,
+    storageUsed: 300,
     storageLimit: 1000, // Go
-    cpuUsage: 0,
-    ramUsage: 0,
-    activeUsers: 0,
-    totalFiles: 0,
+    cpuUsage: 30,
+    ramUsage: 40,
+    activeUsers: 1,
+    totalFiles: 110,
     backupStatus: 'Completed',
     lastBackup: '2024-01-09 14:30',
   });

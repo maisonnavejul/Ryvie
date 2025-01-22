@@ -19,7 +19,7 @@ const importAll = (r) => {
 const images = importAll(require.context('./icons', false, /\.(png|jpe?g|svg)$/));
 const weatherImages = importAll(require.context('./weather_icons', false, /\.(png|jpe?g|svg)$/));
 const weatherIcons = importAll(require.context('./weather_icons', false, /\.(png|jpe?g|svg)$/));
-const exceptions = ['AppStore.png','settings.png','user.png'];
+const exceptions = ['AppStore.png','settings.svg','user.png'];
 
 
 
@@ -116,11 +116,11 @@ const Zone = ({ zoneId, iconId, moveIcon, handleClick, showName, appStatus }) =>
 
 const Taskbar = ({ handleClick }) => {
   const taskbarIcons = [
-    images['AppStore.jpeg'],
-    images['Drive.png'],
+    images['AppStore.svg'],
     images['rCloud.png'],
-    images['user.png'],
-    images['settings.png'],
+    images['transfer.svg'],
+    images['user.svg'],
+    images['settings.svg'],
   ];
 
   return (
@@ -167,7 +167,7 @@ const Home = () => {
     bottom9: [],
     bottom10: [],
     apps: Object.keys(images).filter(
-      (iconId) => !['AppStore.jpeg', 'Drive.png', 'Cloud.png', 'Outline.png','rTransfer.png'].includes(iconId)
+      (iconId) => !['AppStore.jpeg', 'Drive.png', 'rCloud.png', 'Outline.png','rTransfer.png'].includes(iconId)
     ),
   });
 
