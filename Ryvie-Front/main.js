@@ -79,9 +79,9 @@ function createWindowForUser(userId) {
     : `file://${path.join(__dirname, 'dist/index.html')}`);
 
   // Ouvrir DevTools si besoin
-  if (process.env.NODE_ENV === 'development') {
-    window.webContents.openDevTools();
-  }
+  //if (process.env.NODE_ENV === 'development') {
+   // window.webContents.openDevTools();
+  //}
 
   userWindows.set(userId, window);
   return window;

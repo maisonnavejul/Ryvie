@@ -172,12 +172,12 @@ const Home = () => {
   });
 
   const appUrls = {
-    'AppStore.jpeg': accessMode === 'public' ? 'https://user1.appstore.ryvie.fr' : 'http://192.168.1.34:3000',
-    'rCloud.png': accessMode === 'public' ? 'https://user1.rcloud.ryvie.fr' : 'http://192.168.1.34:8080',
-    'Portainer.png': accessMode === 'public' ? 'https://user1.portainer.ryvie.fr' : 'http://192.168.1.34:9000',
+    'AppStore.jpeg': accessMode === 'public' ? 'https://user1.appstore.ryvie.fr' : 'http://ryvie.local:3000',
+    'rCloud.png': accessMode === 'public' ? 'https://rcloud.test.jules.ryvie.fr' : 'http://ryvie.local:3001',
+    'Portainer.png': accessMode === 'public' ? 'https://portainer.test.jules.ryvie.fr' : 'http://ryvie.local:3002',
     'Outline.png': 'https://192.168.1.34:8443/', 
-    'rTransfer.png': accessMode === 'public' ? 'https://user1.rtransfer.ryvie.fr/auth/signIn' : 'http://192.168.1.34:3002',
-    'rDrop.png': accessMode === 'public' ? 'https://user1.rdrop.ryvie.fr' : 'http://ryvie.local:8081',
+    'rTransfer.png': accessMode === 'public' ? 'https://rtransfer.test.jules.ryvie.fr/auth/signIn' : 'http://ryvie.local:3000',
+    'rDrop.png': accessMode === 'public' ? 'https://rdrop.test.jules.ryvie.fr' : 'http://ryvie.local:8080',
   };
   
   const [weather, setWeather] = useState({
@@ -197,26 +197,37 @@ const Home = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   const [mounted, setMounted] = useState(false);
-
   useEffect(() => {
-    const socket = io('http://ryvie.local:3001'); // Adresse de votre serveur
-
+    const storedMode = localStorage.getItem('accessMode') || 'private';
+    setAccessMode(storedMode);
+  }, []);
+  
+  useEffect(() => {
+    // Récupère la valeur de accessMode depuis le localStorage
+    const storedMode = localStorage.getItem('accessMode') || 'private';
+    setAccessMode(storedMode); // Met à jour l'état accessMode
+  
+    const serverUrl = storedMode === 'public' ? 'http://status.test.jules.ryvie.fr' : 'http://ryvie.local:3002';
+    console.log("Connexion à :", serverUrl);
+  
+    const socket = io(serverUrl);
+  
     socket.on('status', (data) => {
       setServerStatus(data.serverStatus);
       if (data.serverStatus) {
         console.log('Connected to server');
       }
     });
-
+  
     socket.on('containers', (data) => {
       console.log('Conteneurs actifs:', data.activeContainers);
-
+  
       const isCloudRunning = data.activeContainers.includes('Cloud');
       const isPortainerRunning = data.activeContainers.includes('Portainer');
       const isOutlineRunning = data.activeContainers.includes('outline');
       const isrTransferRunning = data.activeContainers.includes('pingvin-share-pingvin-share-1');
       const isDropRunning = data.activeContainers.includes('snapdrop-nginx-1');
-
+  
       setAppStatus((prevStatus) => ({
         ...prevStatus,
         'rCloud.png': isCloudRunning,
@@ -226,13 +237,14 @@ const Home = () => {
         'rDrop.png': isDropRunning,
       }));
     });
-
+  
     socket.on('disconnect', () => {
       setServerStatus(false);
     });
-
+  
     return () => socket.disconnect();
-  }, []);
+  }, [accessMode]); //  Ajoute accessMode ici pour réexécuter le useEffect à chaque changement
+  
 
   useEffect(() => {
     const fetchWeatherData = () => {

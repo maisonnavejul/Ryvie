@@ -1,7 +1,7 @@
 const io = require('socket.io-client');
 
 // Connexion au serveur WebSocket
-const socket = io('http://ryvie.local:3001');
+const socket = io('http://ryvie.local:3002');
 
 // Envoyer un message de découverte
 socket.emit('discover');

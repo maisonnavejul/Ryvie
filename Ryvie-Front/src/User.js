@@ -19,7 +19,7 @@ const User = () => {
   useEffect(() => {
     const fetchUsers = async () => {
       try {
-        const response = await axios.get('http://ryvie.local:3001/api/users'); // URL de l'API backend
+        const response = await axios.get('http://ryvie.local:3002/api/users'); // URL de l'API backend
         const ldapUsers = response.data.map((user, index) => ({
           id: index + 1,
           name: user.name || user.uid,
