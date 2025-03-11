@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, ipcMain, session, dialog } = require('electron');
 const path = require('path');
 const { fork } = require('child_process');
+const fs = require('fs');
 
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('disable-software-rasterizer');
@@ -8,19 +9,81 @@ app.commandLine.appendSwitch('disable-software-rasterizer');
 process.env.NODE_ENV = 'development';
 
 let mainWindow;
-let udpProcess; // Processus enfant pour WebSocket
-let lastKnownServerIP = null; // Stocker la dernière IP détectée
-let activeContainers = []; // Stocker les conteneurs actifs
-let serverStatus = null; // Stocker le statut du serveur
+let udpProcess;
+let lastKnownServerIP = null;
+let activeContainers = [];
+let serverStatus = null;
+let downloadPath = '';
+let pendingDownloads = new Set();
+let pendingUploads = new Set();
 
 // Stocker les sessions et fenêtres par utilisateur
 const userWindows = new Map();
 const userSessions = new Map();
 
+// Configuration du dossier de téléchargement par défaut
+app.on('ready', () => {
+  downloadPath = path.join(app.getPath('downloads'), 'Ryvie-rDrop');
+  if (!fs.existsSync(downloadPath)) {
+    fs.mkdirSync(downloadPath, { recursive: true });
+  }
+  app.setPath('downloads', downloadPath);
+});
+
+// Gestionnaire pour changer le dossier de téléchargement
+ipcMain.handle('change-download-folder', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory']
+  });
+  
+  if (!result.canceled && result.filePaths.length > 0) {
+    downloadPath = path.join(result.filePaths[0], 'Ryvie-rDrop');
+    if (!fs.existsSync(downloadPath)) {
+      fs.mkdirSync(downloadPath, { recursive: true });
+    }
+    app.setPath('downloads', downloadPath);
+    return downloadPath;
+  }
+  return null;
+});
+
+// Gestionnaire pour obtenir le dossier de téléchargement actuel
+ipcMain.handle('get-download-folder', () => {
+  return downloadPath;
+});
+
+// Gestionnaire pour la réception de fichiers
+ipcMain.on('file-received', (event) => {
+  const webContents = event.sender;
+  if (webContents.getURL().includes('rdrop')) {
+    // showNotification(webContents, 'Fichiers reçus avec succès');
+  }
+});
+
 function createWindowForUser(userId) {
-  // Créer une session persistante pour l'utilisateur
   const userSession = session.fromPartition(`persist:${userId}`);
   userSessions.set(userId, userSession);
+
+  // Configurer le comportement de téléchargement pour la session
+  userSession.on('will-download', (event, item, webContents) => {
+    const filePath = path.join(downloadPath, item.getFilename());
+    item.setSavePath(filePath);
+    
+    pendingDownloads.add(item);
+    
+    item.on('done', (event, state) => {
+      pendingDownloads.delete(item);
+      
+      if (state === 'completed') {
+        // Si c'était le dernier téléchargement en cours et que la fenêtre est Snapdrop
+        if (pendingDownloads.size === 0 && webContents.getURL().includes('rdrop')) {
+          // showNotification(webContents, 'Vos fichiers ont été envoyés avec succès');
+        }
+      } else {
+        console.error('Erreur lors du téléchargement:', state);
+      }
+    });
+  });
 
   const window = new BrowserWindow({
     width: 1000,

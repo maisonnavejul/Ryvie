@@ -382,10 +382,25 @@ body, html {
   color: white;
 }
 
+.server-status.disconnected {
+  background-color: red; /* Couleur pour déconnecté */
+}
+
 .server-status.connected {
   background-color: green; /* Couleur pour connecté */
 }
 
-.server-status.disconnected {
-  background-color: red; /* Couleur pour déconnecté */
+/* Style pour le panneau de configuration */
+.settings-panel {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+}
+
+/* Style pour l'icône de configuration */
+.settings-icon {
+  width: 20px;
+  height: 20px;
+  filter: invert(1);
 }

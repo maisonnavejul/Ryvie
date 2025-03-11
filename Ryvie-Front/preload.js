@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onContainersUpdated: (callback) => ipcRenderer.on('containers-updated', callback),
   onServerStatus: (callback) => ipcRenderer.on('server-status', callback),
 
+  // Fonctions de gestion du dossier de téléchargement
+  changeDownloadFolder: () => ipcRenderer.invoke('change-download-folder'),
+  getDownloadFolder: () => ipcRenderer.invoke('get-download-folder'),
+
   // Nouvelles fonctions pour la gestion des sessions utilisateur
   invoke: (channel, ...args) => {
     const validChannels = ['create-user-window', 'clear-user-session'];

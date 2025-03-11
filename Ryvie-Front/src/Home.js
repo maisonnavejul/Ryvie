@@ -171,15 +171,6 @@ const Home = () => {
     ),
   });
 
-  const appUrls = {
-    'AppStore.jpeg': accessMode === 'public' ? 'https://user1.appstore.ryvie.fr' : 'http://ryvie.local:3000',
-    'rCloud.png': accessMode === 'public' ? 'https://rcloud.test.jules.ryvie.fr' : 'http://ryvie.local:3001',
-    'Portainer.png': accessMode === 'public' ? 'https://portainer.test.jules.ryvie.fr' : 'http://ryvie.local:3002',
-    'Outline.png': 'https://192.168.1.34:8443/', 
-    'rTransfer.png': accessMode === 'public' ? 'https://rtransfer.test.jules.ryvie.fr/auth/signIn' : 'http://ryvie.local:3000',
-    'rDrop.png': accessMode === 'public' ? 'https://rdrop.test.jules.ryvie.fr' : 'http://ryvie.local:8080',
-  };
-  
   const [weather, setWeather] = useState({
     location: 'Loading...',
     temperature: null,
@@ -354,6 +345,15 @@ const Home = () => {
     }
   };
 
+  const appUrls = {
+    'AppStore.jpeg': accessMode === 'public' ? 'https://user1.appstore.ryvie.fr' : 'http://ryvie.local:3000',
+    'rCloud.png': accessMode === 'public' ? 'https://rcloud.test.jules.ryvie.fr' : 'http://ryvie.local:3001',
+    'Portainer.png': accessMode === 'public' ? 'https://portainer.test.jules.ryvie.fr' : 'http://ryvie.local:3002',
+    'Outline.png': 'https://192.168.1.34:8443/', 
+    'rTransfer.png': accessMode === 'public' ? 'https://rtransfer.test.jules.ryvie.fr/auth/signIn' : 'http://ryvie.local:3000',
+    'rDrop.png': accessMode === 'public' ? 'https://rdrop.test.jules.ryvie.fr' : 'http://ryvie.local:8080',
+  };
+  
   return (
     <div className={`home-container ${mounted ? 'slide-enter-active' : 'slide-enter'}`}>
       <DndProvider backend={HTML5Backend}>

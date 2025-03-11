@@ -30,6 +30,7 @@ const Settings = () => {
     autoDeletionPeriod: '30',
     storageLocation: 'local',
     redundancyLevel: 'raid1',
+    downloadPath: '',
   });
 
   const [applications, setApplications] = useState([
@@ -101,10 +102,18 @@ const Settings = () => {
     },
   ]);
 
-  // Simuler le chargement des données
+  const [changeStatus, setChangeStatus] = useState({ show: false, success: false });
+
   useEffect(() => {
     const fetchData = async () => {
       try {
+        // Charger le dossier de téléchargement actuel
+        const path = await window.electronAPI.getDownloadFolder();
+        setSettings(prev => ({
+          ...prev,
+          downloadPath: path
+        }));
+        
         // Simule un appel API
         await new Promise(resolve => setTimeout(resolve, 1000));
         setLoading(false);
@@ -116,11 +125,26 @@ const Settings = () => {
     fetchData();
   }, []);
 
-  const handleSettingChange = (setting, value) => {
-    setSettings(prev => ({
-      ...prev,
-      [setting]: value
-    }));
+  const handleSettingChange = async (setting, value) => {
+    if (setting === 'downloadPath') {
+      const newPath = await window.electronAPI.changeDownloadFolder();
+      if (newPath) {
+        setSettings(prev => ({
+          ...prev,
+          downloadPath: newPath
+        }));
+        setChangeStatus({ show: true, success: true });
+        setTimeout(() => setChangeStatus({ show: false, success: false }), 3000);
+      } else {
+        setChangeStatus({ show: true, success: false });
+        setTimeout(() => setChangeStatus({ show: false, success: false }), 3000);
+      }
+    } else {
+      setSettings(prev => ({
+        ...prev,
+        [setting]: value
+      }));
+    }
   };
 
   const handleAppAction = (appId, action) => {
@@ -174,6 +198,35 @@ const Settings = () => {
         </button>
         <h1>Paramètres du Cloud</h1>
       </div>
+
+      {/* Section Téléchargements */}
+      <section className="settings-section">
+        <h2>Configuration des téléchargements</h2>
+        <div className="settings-grid">
+          <div className="setting-item">
+            <div className="setting-info">
+              <h3>Dossier de téléchargement</h3>
+              <p>Emplacement où seront sauvegardés les fichiers téléchargés</p>
+              {changeStatus.show && (
+                <div className={`status-message ${changeStatus.success ? 'success' : 'error'}`}>
+                  {changeStatus.success 
+                    ? "✓ Dossier modifié avec succès" 
+                    : "✗ Erreur lors du changement de dossier"}
+                </div>
+              )}
+            </div>
+            <div className="setting-control">
+              <button 
+                onClick={() => handleSettingChange('downloadPath')} 
+                className="setting-button"
+              >
+                <span className="setting-value">{settings.downloadPath}</span>
+                <span className="setting-action">Modifier</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Section Statistiques */}
       <section className="settings-section stats-section">
