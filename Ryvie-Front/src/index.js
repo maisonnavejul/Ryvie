@@ -7,6 +7,9 @@ import Settings from './Settings';
 import Welcome from './welcome'; // Import du composant Welcome
 import Login from './connexion'; // Import du composant Login
 
+// Définir Jules comme utilisateur par défaut au démarrage de l'application
+localStorage.setItem('currentUser', 'Jules');
+
 const App = () => (
   <Router>
     <Routes>

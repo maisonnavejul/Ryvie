@@ -1,37 +1,89 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 
 const UserLogin = () => {
   const [message, setMessage] = useState('');
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const openUserWindow = async (userId) => {
+  useEffect(() => {
+    // Définir Jules comme utilisateur par défaut
+    localStorage.setItem('currentUser', 'Jules');
+    
+    const fetchUsers = async () => {
+      try {
+        const response = await axios.get('http://ryvie.local:3002/api/users');
+        const ldapUsers = response.data.map(user => ({
+          name: user.name || user.uid,
+          id: user.uid,
+          email: user.email || 'Non défini',
+          role: user.role || 'User'
+        }));
+        setUsers(ldapUsers);
+        setLoading(false);
+      } catch (err) {
+        setError('Erreur lors du chargement des utilisateurs');
+        setLoading(false);
+      }
+    };
+
+    fetchUsers();
+  }, []);
+
+  const openUserWindow = async (userId, userName) => {
     try {
-      await window.electronAPI.invoke('create-user-window', userId);
-      setMessage(`Fenêtre ouverte pour ${userId}`);
+      console.log(`Ouverture de session pour: ${userName}`);
+      
+      // Stocker le nom de l'utilisateur dans localStorage
+      localStorage.setItem('currentUser', userName);
+      
+      // Ouvrir une nouvelle fenêtre pour cet utilisateur
+      await window.electronAPI.invoke('create-user-window', userName);
+      setMessage(`Fenêtre ouverte pour ${userName}`);
     } catch (error) {
       setMessage(`Erreur : ${error.message}`);
     }
   };
 
+  if (loading) {
+    return (
+      <div style={styles.container}>
+        <p>Chargement des utilisateurs...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={styles.container}>
+        <p style={styles.error}>{error}</p>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.container}>
       <h1 style={styles.title}>Ouvrir une nouvelle session</h1>
       <div style={styles.form}>
-        <button 
-          onClick={() => openUserWindow('cynthia')} 
-          style={styles.button}
-        >
-          Ouvrir session Cynthia
-        </button>
+        {users.map(user => (
+          <button
+            key={user.id}
+            onClick={() => openUserWindow(user.id, user.name)}
+            style={{
+              ...styles.button,
+              ...(user.id === 'jules' ? styles.primaryButton : {})
+            }}
+          >
+            Ouvrir session {user.name}
+          </button>
+        ))}
       </div>
       {message && <p style={styles.message}>{message}</p>}
-      <p style={styles.info}>
-        La session de Jules est déjà ouverte par défaut.
-      </p>
     </div>
   );
 };
 
-// Styles pour le composant
 const styles = {
   container: {
     display: 'flex',
@@ -61,9 +113,9 @@ const styles = {
     color: 'white',
     cursor: 'pointer',
     transition: 'background-color 0.2s',
-    '&:hover': {
-      backgroundColor: '#0056b3',
-    }
+  },
+  primaryButton: {
+    backgroundColor: '#28a745',
   },
   message: {
     marginTop: '20px',
@@ -72,10 +124,11 @@ const styles = {
     backgroundColor: '#e9ecef',
     color: '#495057',
   },
-  info: {
-    marginTop: '15px',
-    color: '#6c757d',
-    fontStyle: 'italic',
+  error: {
+    color: '#dc3545',
+    padding: '10px',
+    borderRadius: '5px',
+    backgroundColor: '#f8d7da',
   }
 };
 

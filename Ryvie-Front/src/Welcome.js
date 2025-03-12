@@ -8,6 +8,29 @@ const Welcome = () => {
   const [unlocked, setUnlocked] = useState(false);
   const [serverIP, setServerIP] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState('Jules');
+
+  // Effet pour récupérer l'utilisateur actuel depuis localStorage
+  useEffect(() => {
+    
+    // Vérifier s'il y a un utilisateur dans localStorage
+    const storedUser = localStorage.getItem('currentUser');
+    console.log('Utilisateur récupéré:', storedUser);
+    if (storedUser) {
+      setCurrentUser(storedUser);
+    }
+
+    // Écouter les changements de localStorage (pour les fenêtres multiples)
+    const handleStorageChange = (e) => {
+      if (e.key === 'currentUser' && e.newValue) {
+        console.log('Changement d\'utilisateur détecté:', e.newValue);
+        setCurrentUser(e.newValue);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   useEffect(() => {
     console.log('Recherche d\'un serveur Ryvie...');
@@ -65,7 +88,7 @@ const Welcome = () => {
     <div className="welcome-body">
       <div className="welcome-overlay">
         <div className="welcome-text-container">
-          <h1>Bonjour Jules !</h1>
+          <h1>Bonjour {currentUser} !</h1>
         </div>
         <div className={`welcome-container ${unlocked ? 'welcome-hidden' : ''}`}>
           {loading && !serverIP ? (
