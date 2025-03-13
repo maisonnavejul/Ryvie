@@ -15,20 +15,7 @@
   perspective: 3000px;
   overflow: hidden;
   transform-style: preserve-3d;
-}
-
-.welcome-body::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  right: -50%;
-  bottom: -50%;
-  background: linear-gradient(135deg, #f5f5f5 0%, #e0e9ff 100%);
-  transform-style: preserve-3d;
-  transform: translateZ(-1000px);
-  z-index: -1;
-  animation: backgroundZoom 3.5s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+  will-change: transform;
 }
 
 .welcome-body::before {
@@ -38,11 +25,47 @@
   left: 0;
   width: 100%;
   height: 100%;
-  background: url('./background.webp') no-repeat center center fixed;
+  background: url('./background.webp') no-repeat center center;
   background-size: cover;
   filter: blur(5px);
-  opacity: 0.7;
+  opacity: 0;
   z-index: 0;
+  will-change: transform, opacity;
+  animation: backgroundFadeIn 2s ease-out forwards;
+}
+
+@keyframes backgroundFadeIn {
+  0% {
+    opacity: 0;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+}
+
+.welcome-body::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  right: -50%;
+  bottom: -50%;
+  background: linear-gradient(135deg, #f5f5f5 0%, #e0e9ff 100%);
+  transform-style: preserve-3d;
+  transform: scale(1.1);
+  z-index: -1;
+  animation: backgroundZoom 3.5s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+}
+
+@keyframes backgroundZoom {
+  0% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 .welcome-overlay {
@@ -63,15 +86,27 @@
   max-height: 475px;
   min-height: 400px;
   transform-style: preserve-3d;
-  transition: all 0.8s cubic-bezier(0.23, 1, 0.32, 1);
+  transition: all 0.5s cubic-bezier(0.23, 1, 0.32, 1);
   transform-origin: center center;
-  will-change: transform, opacity, filter;
+  will-change: transform, opacity;
+  animation: scaleIn 0.4s ease-out forwards;
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .welcome-hidden {
   opacity: 0;
-  transform: translateZ(2000px) scale(4);
-  filter: brightness(2) blur(5px);
+  transform: translateZ(200px) scale(1.2);
+  transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .welcome-text-container {
@@ -92,7 +127,8 @@
   justify-content: center;
   align-items: center;
   flex: 1;
-  transition: opacity 0.5s ease-in-out, transform 0.5s ease-in-out;
+  transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+  will-change: opacity, transform;
 }
 
 .welcome-server-found {
@@ -108,23 +144,23 @@
     0 10px 25px rgba(0, 0, 0, 0.08),
     0 2px 5px rgba(71, 118, 230, 0.05),
     0 0 0 1px rgba(255, 255, 255, 0.3);
-  transition: all 0.3s ease-in-out;
+  transition: all 0.3s ease-out;
   backdrop-filter: blur(10px);
   position: relative;
   border: 1px solid rgba(71, 118, 230, 0.1);
+  animation: slideUp 0.4s ease-out forwards;
+  will-change: transform, opacity;
 }
 
-.welcome-server-found::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, 
-    rgba(255, 255, 255, 0) 0%, 
-    rgba(71, 118, 230, 0.2) 50%, 
-    rgba(255, 255, 255, 0) 100%);
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .welcome-server-icon {
@@ -134,7 +170,7 @@
   margin-right: 1.2rem;
   border-radius: 12px;
   padding: 8px;
-  background: linear-gradient(135deg, #4776E6 0%, #8E54E9 100%);
+  background: linear-gradient(135deg, #ffffff 0%, #e0eaff 100%);
   transition: all 0.3s ease;
   box-shadow: 
     0 5px 15px rgba(71, 118, 230, 0.15),
@@ -190,7 +226,8 @@
   border-radius: 50%;
   width: 40px;
   height: 40px;
-  animation: spin 1s linear infinite;
+  animation: spin 0.8s linear infinite;
+  will-change: transform;
 }
 
 .welcome-loading-container {
@@ -219,30 +256,36 @@
 }
 
 .welcome-button {
-  width: 100%;
+  width: 93%;
   min-height: 55px;
   display: inline-flex;
   justify-content: center;
   align-items: center;
   gap: 12px;
-  padding: 0.8rem 1.5rem;
-  border: none;
-  border-radius: 16px;
-  font-size: 1.05rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 12px;
+  font-size: 1rem;
   font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(240, 249, 255, 0.95) 100%);
-  color: #1a1a1a;
-  box-shadow: 
-    0 8px 20px rgba(0, 0, 0, 0.08),
-    0 2px 5px rgba(71, 118, 230, 0.05),
-    0 0 0 1px rgba(255, 255, 255, 0.3);
-  backdrop-filter: blur(8px);
   letter-spacing: 0.3px;
   text-align: center;
-  line-height: 1.3;
-  border: 1px solid rgba(71, 118, 230, 0.1);
+  cursor: pointer;
+  transition: all 0.25s ease-out;
+  margin-bottom: 15px;
+  position: relative;
+  overflow: hidden;
+  border: none;
+  will-change: transform, box-shadow;
+}
+
+.welcome-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 7px 14px rgba(14, 14, 219, 0.1), 0 3px 6px rgba(0, 0, 0, 0.08);
+}
+
+.welcome-button:active {
+  transform: translateY(1px);
+  box-shadow: 0 4px 6px rgba(0, 0, 255, 0.11), 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: all 0.1s ease-out;
 }
 
 .button-icon {
@@ -262,7 +305,7 @@
 
 .button-subtitle {
   font-size: 0.85rem;
-  color: #666;
+  color: #656565;
   font-weight: 500;
 }
 
@@ -276,7 +319,6 @@
 }
 
 .welcome-button:not(:disabled):hover .button-icon {
-  color: #8E54E9;
   transform: scale(1.1);
 }
 
@@ -316,29 +358,9 @@
   outline-offset: 4px;
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
-}
-
-@keyframes backgroundZoom {
-  0% {
-    transform: translateZ(-1000px);
-  }
-  100% {
-    transform: translateZ(0);
-  }
 }
 
 @media (max-width: 640px) {
@@ -411,3 +433,13 @@
     font-size: 0.95rem;
   }
 }
+.network-button {
+  background: linear-gradient(135deg, #ffffff 0%, #e0eaff 100%);
+  color: #1a365d;
+  transform: scale(1.05);
+  margin-top: 5px;
+  margin-bottom: 15px;
+  box-shadow: 0 5px 15px rgba(71, 118, 230, 0.25);
+  border: 1px solid rgba(71, 118, 230, 0.3);
+}
+

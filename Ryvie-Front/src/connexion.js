@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
 const UserLogin = () => {
+  const navigate = useNavigate();
   const [message, setMessage] = useState('');
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -83,6 +85,13 @@ const UserLogin = () => {
         ))}
       </div>
       {message && <p style={styles.message}>{message}</p>}
+      
+      <button 
+        onClick={() => navigate('/home')} 
+        style={styles.returnButton}
+      >
+        Retour à l'accueil
+      </button>
     </div>
   );
 };
@@ -132,6 +141,17 @@ const styles = {
     padding: '10px',
     borderRadius: '5px',
     backgroundColor: '#f8d7da',
+  },
+  returnButton: {
+    marginTop: '20px',
+    padding: '10px 15px',
+    fontSize: '1rem',
+    borderRadius: '5px',
+    border: 'none',
+    backgroundColor: '#6c757d',
+    color: 'white',
+    cursor: 'pointer',
+    transition: 'background-color 0.2s',
   }
 };
 

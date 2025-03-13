@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios'; // Import axios
 import './styles/Welcome.css';
 import serverIcon from './icons/lettre-r.png';
 
@@ -98,13 +99,39 @@ const Welcome = () => {
       setLoading(false);
     }
 
-    // Timeout pour arrêter la recherche après 10 secondes
+    // Add a delay to the server detection to make it more visible
+    const checkServer = async () => {
+      try {
+        const response = await axios.get('http://ryvie.local:3002/api/server-status');
+        if (response.data.status === 'online') {
+          // Add a deliberate delay to show the loading animation
+          setTimeout(() => {
+            setServerIP('ryvie.local');
+            setLoading(false);
+          }, 2000); // 2-second delay to make the server detection more visible
+        }
+      } catch (error) {
+        console.error('Erreur lors de la vérification du serveur:', error);
+      }
+    };
+
+    // Optimize initial loading
+    const preloadAssets = () => {
+      // Create a hidden image element to preload the server icon
+      const img = new Image();
+      img.src = serverIcon;
+    };
+    
+    preloadAssets();
+    checkServer();
+    
+    // Longer timeout for server detection to ensure users see the loading animation
     const timeout = setTimeout(() => {
       setLoading(false);
-    }, 10000);
-
+    }, 8000); // Increased from 5000ms to 8000ms
+    
     return () => {
-      clearTimeout(timeout); // Nettoie le timeout
+      clearTimeout(timeout);
     };
   }, []);
 
@@ -184,7 +211,7 @@ const Welcome = () => {
         </div>
         <div className="welcome-buttons-container">
           <button
-            className="welcome-button"
+            className="welcome-button network-button"
             onClick={handlePrivateAccess}
             disabled={!serverIP}
             aria-label={serverIP ? 'Accès depuis la maison' : 'En attente de connexion...'}
@@ -199,7 +226,7 @@ const Welcome = () => {
             </div>
           </button>
           <button
-            className="welcome-button"
+            className="welcome-button network-button"
             onClick={handlePublicAccess}
             aria-label="Accès distant"
           >
