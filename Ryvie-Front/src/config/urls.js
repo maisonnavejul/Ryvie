@@ -15,7 +15,7 @@ const BASE_URLS = {
   // URLs des applications
   APPS: {
     APP_STORE: {
-      PUBLIC: 'https://user1.appstore.ryvie.fr',
+      PUBLIC: 'http://user1.appstore.ryvie.fr',
       PRIVATE: 'http://ryvie.local:3000'
     },
     RCLOUD: {
@@ -23,7 +23,7 @@ const BASE_URLS = {
       PRIVATE: 'http://ryvie.local:3001'
     },
     PORTAINER: {
-      PUBLIC: 'https://portainer.test.jules.ryvie.fr',
+      PUBLIC: 'http://portainer.test.jules.ryvie.fr',
       PRIVATE: 'http://ryvie.local:9005'
     },
     OUTLINE: {
@@ -31,11 +31,11 @@ const BASE_URLS = {
       PRIVATE: 'https://192.168.1.34:8443/'
     },
     RTRANSFER: {
-      PUBLIC: 'https://rtransfer.test.jules.ryvie.fr/auth/signIn',
+      PUBLIC: 'http://rtransfer.test.jules.ryvie.fr/auth/signIn',
       PRIVATE: 'http://ryvie.local:3000'
     },
     RDROP: {
-      PUBLIC: 'https://rdrop.test.jules.ryvie.fr',
+      PUBLIC: 'http://rdrop.test.jules.ryvie.fr',
       PRIVATE: 'http://ryvie.local:8080'
     }
   }

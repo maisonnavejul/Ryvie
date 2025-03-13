@@ -5,6 +5,7 @@ const fs = require('fs');
 
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('disable-software-rasterizer');
+app.commandLine.appendSwitch('ignore-certificate-errors');
 
 process.env.NODE_ENV = 'development';
 
