@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './styles/Settings.css';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+const { getServerUrl } = require('./config/urls');
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -131,7 +132,7 @@ const Settings = () => {
     setAccessMode(storedMode);
     
     // Détermine l'URL du serveur en fonction du mode d'accès
-    const baseUrl = storedMode === 'public' ? 'http://status.test.jules.ryvie.fr' : 'http://ryvie.local:3002';
+    const baseUrl = getServerUrl(storedMode);
     console.log("Connexion à :", baseUrl);
     
     // Fonction pour récupérer les informations serveur
@@ -197,6 +198,30 @@ const Settings = () => {
       cpuUsage: cpuUsage,
       ramUsage: ramUsage
     }));
+  };
+
+  // Fonction pour changer le mode d'accès
+  const handleAccessModeChange = (newMode) => {
+    // Mettre à jour le localStorage
+    localStorage.setItem('accessMode', newMode);
+    
+    // Mettre à jour l'état local
+    setAccessMode(newMode);
+    
+    // Notifier le processus principal du changement
+    window.electronAPI.updateAccessMode(newMode);
+    
+    // Afficher un message de confirmation
+    setChangeStatus({
+      show: true,
+      success: true,
+      message: `Mode d'accès changé pour: ${newMode === 'public' ? 'Public' : 'Privé'}`
+    });
+    
+    // Masquer le message après 3 secondes
+    setTimeout(() => {
+      setChangeStatus({ show: false, success: false });
+    }, 3000);
   };
 
   const handleSettingChange = async (setting, value) => {
@@ -526,6 +551,37 @@ const Settings = () => {
                 <option value="180">180 jours</option>
                 <option value="365">365 jours</option>
               </select>
+            </div>
+          </div>
+
+          {/* Mode d'accès */}
+          <div className="setting-item">
+            <div className="setting-info">
+              <h3>Mode d'accès</h3>
+              <p>Définit comment l'application se connecte au serveur Ryvie</p>
+              {changeStatus.show && (
+                <div className={`status-message ${changeStatus.success ? 'success' : 'error'}`}>
+                  {changeStatus.success 
+                    ? changeStatus.message || "✓ Paramètre modifié avec succès" 
+                    : "✗ Erreur lors du changement de paramètre"}
+                </div>
+              )}
+            </div>
+            <div className="setting-control">
+              <div className="toggle-buttons">
+                <button 
+                  className={`toggle-button ${accessMode === 'private' ? 'active' : ''}`}
+                  onClick={() => handleAccessModeChange('private')}
+                >
+                  Privé (Local)
+                </button>
+                <button 
+                  className={`toggle-button ${accessMode === 'public' ? 'active' : ''}`}
+                  onClick={() => handleAccessModeChange('public')}
+                >
+                  Public (Internet)
+                </button>
+              </div>
             </div>
           </div>
         </div>

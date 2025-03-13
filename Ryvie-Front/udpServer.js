@@ -1,7 +1,16 @@
 const io = require('socket.io-client');
+const { getServerUrl } = require('./src/config/urls');
+
+// Récupérer le mode d'accès depuis les arguments de ligne de commande
+const args = process.argv.slice(2);
+const accessMode = args[0] || 'private';
+
+// Déterminer l'URL du serveur en fonction du mode d'accès
+const serverUrl = getServerUrl(accessMode);
+console.log(`Mode d'accès: ${accessMode}, Connexion au serveur: ${serverUrl}`);
 
 // Connexion au serveur WebSocket
-const socket = io('http://ryvie.local:3002');
+const socket = io(serverUrl);
 
 // Envoyer un message de découverte
 socket.emit('discover');

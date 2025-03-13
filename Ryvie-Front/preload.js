@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   changeDownloadFolder: () => ipcRenderer.invoke('change-download-folder'),
   getDownloadFolder: () => ipcRenderer.invoke('get-download-folder'),
 
+  // Mettre à jour le mode d'accès global
+  updateAccessMode: (mode) => ipcRenderer.send('update-access-mode', mode),
+
   // Nouvelles fonctions pour la gestion des sessions utilisateur
   invoke: (channel, ...args) => {
     const validChannels = ['create-user-window', 'clear-user-session', 'create-user-window-with-mode', 'update-session-partition'];

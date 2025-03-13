@@ -5,7 +5,8 @@ import axios from 'axios';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { io } from 'socket.io-client';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+const { getServerUrl, getAppUrl } = require('./config/urls');
 
 // Fonction pour importer toutes les images du dossier icons
 const importAll = (r) => {
@@ -198,7 +199,7 @@ const Home = () => {
     const storedMode = localStorage.getItem('accessMode') || 'private';
     setAccessMode(storedMode); // Met à jour l'état accessMode
   
-    const serverUrl = storedMode === 'public' ? 'http://status.test.jules.ryvie.fr' : 'http://ryvie.local:3002';
+    const serverUrl = getServerUrl(storedMode);
     console.log("Connexion à :", serverUrl);
   
     const socket = io(serverUrl);
@@ -346,12 +347,12 @@ const Home = () => {
   };
 
   const appUrls = {
-    'AppStore.jpeg': accessMode === 'public' ? 'https://user1.appstore.ryvie.fr' : 'http://ryvie.local:3000',
-    'rCloud.png': accessMode === 'public' ? 'https://rcloud.test.jules.ryvie.fr' : 'http://ryvie.local:3001',
-    'Portainer.png': accessMode === 'public' ? 'https://portainer.test.jules.ryvie.fr' : 'http://ryvie.local:9005',
-    'Outline.png': 'https://192.168.1.34:8443/', 
-    'rTransfer.png': accessMode === 'public' ? 'https://rtransfer.test.jules.ryvie.fr/auth/signIn' : 'http://ryvie.local:3000',
-    'rDrop.png': accessMode === 'public' ? 'https://rdrop.test.jules.ryvie.fr' : 'http://ryvie.local:8080',
+    'AppStore.jpeg': getAppUrl('APP_STORE', accessMode),
+    'rCloud.png': getAppUrl('RCLOUD', accessMode),
+    'Portainer.png': getAppUrl('PORTAINER', accessMode),
+    'Outline.png': getAppUrl('OUTLINE', accessMode),
+    'rTransfer.png': getAppUrl('RTRANSFER', accessMode),
+    'rDrop.png': getAppUrl('RDROP', accessMode),
   };
   
   return (

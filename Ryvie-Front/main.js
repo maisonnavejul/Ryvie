@@ -196,7 +196,13 @@ ipcMain.handle('clear-user-session', async (event, userId, accessMode = 'private
 
 function startUdpBackend() {
   const udpServerPath = path.join(__dirname, 'udpServer.js');
-  udpProcess = fork(udpServerPath);
+  
+  // Récupérer le mode d'accès depuis le localStorage
+  const accessMode = global.accessMode || 'private';
+  console.log(`Démarrage du processus UDP avec le mode d'accès: ${accessMode}`);
+  
+  // Passer le mode d'accès comme argument au processus
+  udpProcess = fork(udpServerPath, [accessMode]);
 
   // Écouter les messages du processus WebSocket
   udpProcess.on('message', (msg) => {
@@ -245,6 +251,19 @@ function startUdpBackend() {
 ipcMain.handle('request-initial-server-ip', () => lastKnownServerIP);
 ipcMain.handle('request-active-containers', () => activeContainers);
 ipcMain.handle('request-server-status', () => serverStatus);
+
+// Gestionnaire pour mettre à jour le mode d'accès global
+ipcMain.on('update-access-mode', (event, mode) => {
+  console.log(`Mode d'accès mis à jour: ${mode}`);
+  global.accessMode = mode;
+  
+  // Redémarrer le processus UDP avec le nouveau mode d'accès
+  if (udpProcess) {
+    console.log('Redémarrage du processus UDP avec le nouveau mode d\'accès');
+    udpProcess.kill();
+    startUdpBackend();
+  }
+});
 
 app.whenReady().then(() => {
   // Set Jules as the default user
