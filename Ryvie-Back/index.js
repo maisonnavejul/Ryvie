@@ -4,6 +4,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 const os = require('os');
 const Docker = require('dockerode');
+const diskusage = require('diskusage');
+const path = require('path');
 const ldap = require('ldapjs');
 
 const docker = new Docker();
@@ -48,6 +50,34 @@ async function initializeActiveContainers() {
     });
   });
 }
+const osutils = require('os-utils');
+
+async function getServerInfo() {
+  const totalRam = os.totalmem();
+  const freeRam = os.freemem();
+  const ramUsagePercentage = (((totalRam - freeRam) / totalRam) * 100).toFixed(1);
+
+  const diskInfo = diskusage.checkSync(path.parse(__dirname).root);
+  const totalDiskGB = (diskInfo.total / 1e9).toFixed(1);
+  const usedDiskGB = ((diskInfo.total - diskInfo.free) / 1e9).toFixed(1);
+
+  const cpuUsagePercentage = await new Promise((resolve) => {
+    osutils.cpuUsage((usage) => {
+      resolve((usage * 100).toFixed(1));
+    });
+  });
+
+  return {
+    stockage: {
+      utilise: `${usedDiskGB} GB`,
+      total: `${totalDiskGB} GB`,
+    },
+    performance: {
+      cpu: `${cpuUsagePercentage}%`,
+      ram: `${ramUsagePercentage}%`,
+    },
+  };
+}
 
 // Fonction pour récupérer l'adresse IP locale
 function getLocalIP() {
@@ -88,7 +118,7 @@ docker.getEvents((err, stream) => {
 
 // LDAP Configuration
 const ldapConfig = {
-  url: 'ldap://172.19.0.1:389',
+  url: 'ldap://localhost:389',
   bindDN: 'cn=read-only,ou=users,dc=example,dc=org',
   bindPassword: 'Wimereux',
   userSearchBase: 'ou=users,dc=example,dc=org',
@@ -197,8 +227,16 @@ app.get('/status', (req, res) => {
     ip: getLocalIP(),
   });
 });
+app.get('/api/server-info', async (req, res) => {
+  try {
+    const serverInfo = await getServerInfo();
+    res.json(serverInfo);
+  } catch (error) {
+    console.error('Erreur lors de la récupération des infos serveur :', error);
+    res.status(500).json({ error: "Impossible de récupérer les infos serveur" });
+  }
+});
 
-// WebSocket pour la détection en temps réel
 io.on('connection', async (socket) => {
   console.log('Un client est connecté');
 
@@ -221,8 +259,8 @@ async function startServer() {
     activeContainers = await initializeActiveContainers();
     console.log('Liste initialisée des conteneurs actifs :', activeContainers);
 
-    httpServer.listen(3001, () => {
-      console.log(`HTTP Server running on http://${getLocalIP()}:3001`);
+    httpServer.listen(3002, () => {
+      console.log(`HTTP Server running on http://${getLocalIP()}:3002`);
     });
   } catch (err) {
     console.error('Erreur lors de l\'initialisation du serveur :', err);
