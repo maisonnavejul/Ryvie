@@ -7,10 +7,10 @@ const Settings = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
-    storageUsed: 300,
-    storageLimit: 1000, // Go
-    cpuUsage: 30,
-    ramUsage: 40,
+    storageUsed: 0,
+    storageLimit: 0, // Go
+    cpuUsage: 0,
+    ramUsage: 0,
     activeUsers: 1,
     totalFiles: 110,
     backupStatus: 'Completed',
@@ -103,6 +103,7 @@ const Settings = () => {
   ]);
 
   const [changeStatus, setChangeStatus] = useState({ show: false, success: false });
+  const [accessMode, setAccessMode] = useState('private');
 
   useEffect(() => {
     const fetchData = async () => {
@@ -114,8 +115,6 @@ const Settings = () => {
           downloadPath: path
         }));
         
-        // Simule un appel API
-        await new Promise(resolve => setTimeout(resolve, 1000));
         setLoading(false);
       } catch (error) {
         console.error('Error fetching settings:', error);
@@ -124,6 +123,81 @@ const Settings = () => {
     };
     fetchData();
   }, []);
+
+  // Récupération des informations serveur
+  useEffect(() => {
+    // Récupère la valeur de accessMode depuis le localStorage
+    const storedMode = localStorage.getItem('accessMode') || 'private';
+    setAccessMode(storedMode);
+    
+    // Détermine l'URL du serveur en fonction du mode d'accès
+    const baseUrl = storedMode === 'public' ? 'http://status.test.jules.ryvie.fr' : 'http://ryvie.local:3002';
+    console.log("Connexion à :", baseUrl);
+    
+    // Fonction pour récupérer les informations serveur
+    const fetchServerInfo = async () => {
+      try {
+        const response = await axios.get(`${baseUrl}/api/server-info`);
+        console.log('Informations serveur reçues:', response.data);
+        updateServerStats(response.data);
+      } catch (error) {
+        console.error('Erreur lors de la récupération des informations serveur:', error);
+      }
+    };
+    
+    // Appel initial
+    fetchServerInfo();
+    
+    // Configuration de l'intervalle pour les mises à jour régulières
+    const intervalId = setInterval(fetchServerInfo, 2000);
+    
+    // Nettoyage lors du démontage du composant
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [accessMode]); // Réexécute l'effet si le mode d'accès change
+  
+  // Fonction pour mettre à jour les statistiques du serveur
+  const updateServerStats = (data) => {
+    if (!data) return;
+    
+    // Extraire les valeurs de stockage
+    let storageUsed = 0;
+    let storageTotal = 1000; // Valeur par défaut
+    
+    if (data.stockage) {
+      // Convertir les valeurs de GB en nombre
+      const usedMatch = data.stockage.utilise.match(/(\d+(\.\d+)?)/);
+      const totalMatch = data.stockage.total.match(/(\d+(\.\d+)?)/);
+      
+      if (usedMatch && totalMatch) {
+        storageUsed = parseFloat(usedMatch[0]);
+        storageTotal = parseFloat(totalMatch[0]);
+      }
+    }
+    
+    // Extraire les valeurs de performance
+    let cpuUsage = 30; // Valeur par défaut
+    let ramUsage = 40; // Valeur par défaut
+    
+    if (data.performance) {
+      // Convertir les pourcentages en nombres
+      const cpuMatch = data.performance.cpu.match(/(\d+(\.\d+)?)/);
+      const ramMatch = data.performance.ram.match(/(\d+(\.\d+)?)/);
+      
+      if (cpuMatch) cpuUsage = parseFloat(cpuMatch[0]);
+      if (ramMatch) ramUsage = parseFloat(ramMatch[0]);
+    }
+    
+    // Mettre à jour les statistiques
+    setStats(prev => ({
+      ...prev,
+      storageUsed: storageUsed,
+      storageLimit: storageTotal,
+      cpuUsage: cpuUsage,
+      ramUsage: ramUsage
+    }));
+  };
 
   const handleSettingChange = async (setting, value) => {
     if (setting === 'downloadPath') {
@@ -198,35 +272,6 @@ const Settings = () => {
         </button>
         <h1>Paramètres du Cloud</h1>
       </div>
-
-      {/* Section Téléchargements */}
-      <section className="settings-section">
-        <h2>Configuration des téléchargements</h2>
-        <div className="settings-grid">
-          <div className="setting-item">
-            <div className="setting-info">
-              <h3>Dossier de téléchargement</h3>
-              <p>Emplacement où seront sauvegardés les fichiers téléchargés</p>
-              {changeStatus.show && (
-                <div className={`status-message ${changeStatus.success ? 'success' : 'error'}`}>
-                  {changeStatus.success 
-                    ? "✓ Dossier modifié avec succès" 
-                    : "✗ Erreur lors du changement de dossier"}
-                </div>
-              )}
-            </div>
-            <div className="setting-control">
-              <button 
-                onClick={() => handleSettingChange('downloadPath')} 
-                className="setting-button"
-              >
-                <span className="setting-value">{settings.downloadPath}</span>
-                <span className="setting-action">Modifier</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
 
       {/* Section Statistiques */}
       <section className="settings-section stats-section">
@@ -304,7 +349,35 @@ const Settings = () => {
           </div>
         </div>
       </section>
-
+      {/* Section Téléchargements */}
+      <section className="settings-section">
+        <h2>Configuration des téléchargements</h2>
+        <div className="settings-grid">
+          <div className="setting-item">
+            <div className="setting-info">
+              <h3>Dossier de téléchargement</h3>
+              <p>Emplacement où seront sauvegardés les fichiers téléchargés</p>
+              {changeStatus.show && (
+                <div className={`status-message ${changeStatus.success ? 'success' : 'error'}`}>
+                  {changeStatus.success 
+                    ? "✓ Dossier modifié avec succès" 
+                    : "✗ Erreur lors du changement de dossier"}
+                </div>
+              )}
+            </div>
+            <div className="setting-control">
+              <button 
+                onClick={() => handleSettingChange('downloadPath')} 
+                className="setting-button"
+              >
+                <span className="setting-value">{settings.downloadPath}</span>
+                <span className="setting-action">Modifier</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+      
       {/* Section Paramètres */}
       <section className="settings-section">
         <h2>Configuration du Cloud</h2>
