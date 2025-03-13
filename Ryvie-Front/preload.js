@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onRyvieIP: (callback) => ipcRenderer.on('ryvie-ip', callback),
   onContainersUpdated: (callback) => ipcRenderer.on('containers-updated', callback),
   onServerStatus: (callback) => ipcRenderer.on('server-status', callback),
+  // Recevoir l'ID utilisateur actuel
+  onSetCurrentUser: (callback) => ipcRenderer.on('set-current-user', callback),
 
   // Fonctions de gestion du dossier de téléchargement
   changeDownloadFolder: () => ipcRenderer.invoke('change-download-folder'),
@@ -18,7 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Nouvelles fonctions pour la gestion des sessions utilisateur
   invoke: (channel, ...args) => {
-    const validChannels = ['create-user-window', 'clear-user-session'];
+    const validChannels = ['create-user-window', 'clear-user-session', 'create-user-window-with-mode', 'update-session-partition'];
     if (validChannels.includes(channel)) {
       return ipcRenderer.invoke(channel, ...args);
     }

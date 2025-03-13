@@ -38,9 +38,12 @@ const UserLogin = () => {
       // Stocker le nom de l'utilisateur dans localStorage
       localStorage.setItem('currentUser', userName);
       
-      // Ouvrir une nouvelle fenêtre pour cet utilisateur
-      await window.electronAPI.invoke('create-user-window', userName);
-      setMessage(`Fenêtre ouverte pour ${userName}`);
+      // Récupérer le mode d'accès actuel (privé ou public)
+      const accessMode = localStorage.getItem('accessMode') || 'private';
+      
+      // Ouvrir une nouvelle fenêtre pour cet utilisateur avec le mode d'accès spécifié
+      await window.electronAPI.invoke('create-user-window-with-mode', userName, accessMode);
+      setMessage(`Fenêtre ouverte pour ${userName} en mode ${accessMode}`);
     } catch (error) {
       setMessage(`Erreur : ${error.message}`);
     }

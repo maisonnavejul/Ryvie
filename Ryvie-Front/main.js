@@ -60,8 +60,9 @@ ipcMain.on('file-received', (event) => {
   }
 });
 
-function createWindowForUser(userId) {
-  const userSession = session.fromPartition(`persist:${userId}`);
+function createWindowForUser(userId, accessMode = 'private') {
+  const userSession = session.fromPartition(`persist:${userId}-${accessMode}`);
+  console.log(`Création de la fenêtre pour l'utilisateur: ${userId} avec le mode ${accessMode}`);
 
   userSession.on('will-download', (event, item, webContents) => {
     const filePath = path.join(downloadPath, item.getFilename());
@@ -89,7 +90,7 @@ function createWindowForUser(userId) {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      partition: `persist:${userId}`
+      partition: `persist:${userId}-${accessMode}`
     },
   });
 
@@ -104,7 +105,7 @@ function createWindowForUser(userId) {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        partition: `persist:${userId}`
+        partition: `persist:${userId}-${accessMode}`
       }
     });
 
@@ -118,32 +119,78 @@ function createWindowForUser(userId) {
     ? 'http://localhost:3000'
     : `file://${path.join(__dirname, 'dist/index.html')}`);
 
-  userWindows.set(userId, window);
+  // Pass the user ID to the renderer process once the window is loaded
+  window.webContents.on('did-finish-load', () => {
+    window.webContents.send('set-current-user', userId);
+  });
+
+  userWindows.set(`${userId}-${accessMode}`, window);
   return window;
 }
 
-ipcMain.handle('create-user-window', async (event, userId) => {
-  if (userWindows.has(userId)) {
-    const existingWindow = userWindows.get(userId);
+// Add a new IPC handler to create windows with specific access mode
+ipcMain.handle('create-user-window-with-mode', async (event, userId, accessMode) => {
+  if (userWindows.has(`${userId}-${accessMode}`)) {
+    const existingWindow = userWindows.get(`${userId}-${accessMode}`);
     if (!existingWindow.isDestroyed()) {
       existingWindow.focus();
       return;
     }
   }
-  createWindowForUser(userId);
+  createWindowForUser(userId, accessMode);
   return true;
 });
 
-ipcMain.handle('clear-user-session', async (event, userId) => {
-  const userSession = session.fromPartition(`persist:${userId}`);
+// Modify the existing create-user-window handler to use the default mode
+ipcMain.handle('create-user-window', async (event, userId) => {
+  // Default to 'private' mode for backward compatibility
+  return ipcMain.handle('create-user-window-with-mode', event, userId, 'private');
+});
+
+// Add a new IPC handler to update the session partition without creating a new window
+ipcMain.handle('update-session-partition', async (event, userId, accessMode) => {
+  console.log(`Mise à jour de la partition de session pour l'utilisateur: ${userId} avec le mode ${accessMode}`);
+  
+  // Get the sender window
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!senderWindow) {
+    console.error('Fenêtre expéditrice non trouvée');
+    return false;
+  }
+  
+  // Update the session partition for the current window
+  // Note: We can't actually change the partition of an existing window,
+  // but we can update our internal mapping to ensure future operations use the correct partition
+  
+  // Remove the old mapping (if any)
+  for (const [key, window] of userWindows.entries()) {
+    if (window === senderWindow) {
+      userWindows.delete(key);
+      break;
+    }
+  }
+  
+  // Add the new mapping
+  userWindows.set(`${userId}-${accessMode}`, senderWindow);
+  
+  // Store the current user and access mode in the window object for future reference
+  senderWindow.userId = userId;
+  senderWindow.accessMode = accessMode;
+  
+  console.log(`Partition de session mise à jour pour ${userId} en mode ${accessMode}`);
+  return true;
+});
+
+ipcMain.handle('clear-user-session', async (event, userId, accessMode = 'private') => {
+  const userSession = session.fromPartition(`persist:${userId}-${accessMode}`);
   await userSession.clearStorageData();
 
-  if (userWindows.has(userId)) {
-    const window = userWindows.get(userId);
+  if (userWindows.has(`${userId}-${accessMode}`)) {
+    const window = userWindows.get(`${userId}-${accessMode}`);
     if (!window.isDestroyed()) {
       window.close();
     }
-    userWindows.delete(userId);
+    userWindows.delete(`${userId}-${accessMode}`);
   }
 });
 
@@ -159,25 +206,33 @@ function startUdpBackend() {
       console.log(`IP détectée dans main.js : ${msg.ip}`);
       lastKnownServerIP = msg.ip;
 
-      if (mainWindow) {
-        mainWindow.webContents.send('ryvie-ip', {
-          ip: msg.ip,
-          message: msg.message,
-        });
+      for (const [userId, window] of userWindows.entries()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send('ryvie-ip', {
+            ip: msg.ip,
+            message: msg.message,
+          });
+        }
       }
     } else if (msg.type === 'containers') {
       console.log('Conteneurs mis à jour :', msg.containers);
       activeContainers = msg.containers;
 
-      if (mainWindow) {
-        mainWindow.webContents.send('containers-updated', activeContainers);
+      // Send to all open windows
+      for (const [userId, window] of userWindows.entries()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send('containers-updated', activeContainers);
+        }
       }
     } else if (msg.type === 'status') {
       console.log('Statut du serveur mis à jour :', msg.status);
       serverStatus = msg.status;
 
-      if (mainWindow) {
-        mainWindow.webContents.send('server-status', serverStatus);
+      // Send to all open windows
+      for (const [userId, window] of userWindows.entries()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send('server-status', serverStatus);
+        }
       }
     }
   });
@@ -192,7 +247,8 @@ ipcMain.handle('request-active-containers', () => activeContainers);
 ipcMain.handle('request-server-status', () => serverStatus);
 
 app.whenReady().then(() => {
-  mainWindow = createWindowForUser('default');
+  // Set Jules as the default user
+  createWindowForUser('jules');
   startUdpBackend();
 });
 
@@ -203,6 +259,7 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    mainWindow = createWindowForUser('default');
+    // Set Jules as the default user
+    createWindowForUser('jules');
   }
 });

@@ -8,7 +8,35 @@ const Welcome = () => {
   const [unlocked, setUnlocked] = useState(false);
   const [serverIP, setServerIP] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState('Jules');
+  const [currentUser, setCurrentUser] = useState(null);
+
+  // Receive user ID directly from main process
+  useEffect(() => {
+    // Check if electronAPI is available
+    if (window.electronAPI && window.electronAPI.onSetCurrentUser) {
+      // Add event listener for 'set-current-user'
+      const handleSetCurrentUser = (_, userId) => {
+        console.log('User ID received from main process:', userId);
+        setCurrentUser(userId);
+        // Also update localStorage for compatibility with existing code
+        localStorage.setItem('currentUser', userId);
+      };
+      
+      window.electronAPI.onSetCurrentUser(handleSetCurrentUser);
+      
+      // In Electron, we typically can't remove IPC listeners the same way
+      // The component will be unmounted and garbage collected
+      return () => {};
+    }
+  }, []);
+
+  // Retrieve the user from localStorage as fallback
+  useEffect(() => {
+    const storedUser = localStorage.getItem('currentUser');
+    if (storedUser) {
+      setCurrentUser(storedUser);
+    }
+  }, []);
 
   // Effet pour récupérer l'utilisateur actuel depuis localStorage
   useEffect(() => {
@@ -47,9 +75,21 @@ const Welcome = () => {
       // Ajouter le gestionnaire d'événements pour 'ryvie-ip'
       window.electronAPI.onRyvieIP(handleServerIP);
 
+      // Demander l'IP initiale du serveur (au cas où elle a été détectée avant le chargement de ce composant)
+      window.electronAPI.requestInitialServerIP().then(ip => {
+        if (ip) {
+          console.log(`IP initiale récupérée : ${ip}`);
+          setServerIP(ip);
+          setLoading(false);
+        }
+      }).catch(err => {
+        console.error('Erreur lors de la récupération de l\'IP initiale:', err);
+      });
+
       // Nettoyage de l'effet
       return () => {
-        window.electronAPI.onRyvieIP(handleServerIP); // Nettoie l'écouteur
+        // In Electron, we typically can't remove IPC listeners the same way
+        // The component will be unmounted and garbage collected
       };
     } else {
       // Si l'API n'est pas disponible, simuler un serveur trouvé pour le développement web
@@ -69,7 +109,21 @@ const Welcome = () => {
   }, []);
 
   const handlePrivateAccess = () => {
+    // Store the access mode in localStorage
     localStorage.setItem('accessMode', 'private');
+    
+    // Update the session partition without creating a new window
+    if (window.electronAPI && currentUser) {
+      // Get the current session's cookies and update the partition
+      window.electronAPI.invoke('update-session-partition', currentUser, 'private')
+        .then(() => {
+          console.log(`Session mise à jour pour ${currentUser} en mode privé`);
+        })
+        .catch(err => {
+          console.error('Erreur lors de la mise à jour de la session:', err);
+        });
+    }
+    
     setUnlocked(true);
     setTimeout(() => {
       navigate('/home');
@@ -77,7 +131,21 @@ const Welcome = () => {
   };
   
   const handlePublicAccess = () => {
+    // Store the access mode in localStorage
     localStorage.setItem('accessMode', 'public');
+    
+    // Update the session partition without creating a new window
+    if (window.electronAPI && currentUser) {
+      // Get the current session's cookies and update the partition
+      window.electronAPI.invoke('update-session-partition', currentUser, 'public')
+        .then(() => {
+          console.log(`Session mise à jour pour ${currentUser} en mode public`);
+        })
+        .catch(err => {
+          console.error('Erreur lors de la mise à jour de la session:', err);
+        });
+    }
+    
     setUnlocked(true);
     setTimeout(() => {
       navigate('/home');
@@ -105,7 +173,7 @@ const Welcome = () => {
               <img src={serverIcon} alt="Icône de serveur Ryvie" className="welcome-server-icon" />
               <div className="welcome-server-info">
                 <p className="welcome-server-text">Connexion Ryvie établie</p>
-                <p className="welcome-server-ip">ryvie.local</p>
+                <p className="welcome-server-ip">{serverIP}</p>
               </div>
             </div>
           ) : (
