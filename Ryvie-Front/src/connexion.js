@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+const { getServerUrl } = require('./config/urls');
 
 const UserLogin = () => {
   const navigate = useNavigate();
@@ -8,14 +9,21 @@ const UserLogin = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [accessMode, setAccessMode] = useState('private');
 
   useEffect(() => {
+    // Récupérer le mode d'accès depuis le localStorage
+    const storedMode = localStorage.getItem('accessMode') || 'private';
+    setAccessMode(storedMode);
+    
     // Définir Jules comme utilisateur par défaut
     localStorage.setItem('currentUser', 'Jules');
     
     const fetchUsers = async () => {
       try {
-        const response = await axios.get('http://ryvie.local:3002/api/users');
+        // Utiliser l'URL du serveur en fonction du mode d'accès
+        const serverUrl = getServerUrl(storedMode);
+        const response = await axios.get(`${serverUrl}/api/users`);
         const ldapUsers = response.data.map(user => ({
           name: user.name || user.uid,
           id: user.uid,
@@ -25,6 +33,7 @@ const UserLogin = () => {
         setUsers(ldapUsers);
         setLoading(false);
       } catch (err) {
+        console.error('Erreur lors du chargement des utilisateurs:', err);
         setError('Erreur lors du chargement des utilisateurs');
         setLoading(false);
       }

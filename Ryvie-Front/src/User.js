@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './styles/User.css';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+const { getServerUrl } = require('./config/urls');
 
 const User = () => {
   const navigate = useNavigate();
@@ -14,12 +15,21 @@ const User = () => {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [loading, setLoading] = useState(true); // Indicateur de chargement
   const [error, setError] = useState(null); // Gestion des erreurs
+  const [accessMode, setAccessMode] = useState('private');
 
   // Récupération des utilisateurs depuis l'API
   useEffect(() => {
+    // Récupérer le mode d'accès depuis le localStorage
+    const storedMode = localStorage.getItem('accessMode') || 'private';
+    setAccessMode(storedMode);
+    
     const fetchUsers = async () => {
       try {
-        const response = await axios.get('http://ryvie.local:3002/api/users'); // URL de l'API backend
+        // Utiliser l'URL du serveur en fonction du mode d'accès
+        const serverUrl = getServerUrl(storedMode);
+        console.log("Connexion à :", serverUrl);
+        
+        const response = await axios.get(`${serverUrl}/api/users`); // URL de l'API backend
         const ldapUsers = response.data.map((user, index) => ({
           id: index + 1,
           name: user.name || user.uid,
@@ -29,6 +39,7 @@ const User = () => {
         setUsers(ldapUsers);
         setLoading(false);
       } catch (err) {
+        console.error('Erreur lors du chargement des utilisateurs:', err);
         setError('Erreur lors du chargement des utilisateurs');
         setLoading(false);
       }
