@@ -222,19 +222,32 @@ const Taskbar = ({ handleClick }) => {
 // Composant principal
 const Home = () => {
   const [accessMode, setAccessMode] = useState('private'); 
-  const [zones, setZones] = useState({
-    left: ['AppStore.jpeg'],
-    right: ['Portainer.png'],
-    bottom1: ['rPictures.svg'],
-    bottom2: ['rCloud.png'],
-    bottom3: ['Outline.png'],
-    bottom4: ['rTransfer.png'],
-    bottom5: ['rDrop.png'],
-    bottom6: [],
-    bottom7: [],
-    bottom8: [],
-    bottom9: [],
-    bottom10: [],
+  const [zones, setZones] = useState(() => {
+    // Essayer de récupérer les zones depuis localStorage
+    const savedZones = localStorage.getItem('iconZones');
+    if (savedZones) {
+      try {
+        return JSON.parse(savedZones);
+      } catch (error) {
+        console.error('Erreur lors de la récupération des zones:', error);
+      }
+    }
+    
+    // Valeurs par défaut si rien n'est trouvé dans localStorage
+    return {
+      left: ['AppStore.jpeg'],
+      right: ['Portainer.png'],
+      bottom1: ['rPictures.svg'],
+      bottom2: ['rCloud.png'],
+      bottom3: ['Outline.png'],
+      bottom4: ['rTransfer.png'],
+      bottom5: ['rDrop.png'],
+      bottom6: [],
+      bottom7: [],
+      bottom8: [],
+      bottom9: [],
+      bottom10: [],
+    };
   });
 
   const [weather, setWeather] = useState({
@@ -369,11 +382,16 @@ const Home = () => {
         fromIcons.push(existingIconId);
       }
 
-      return {
+      const newZones = {
         ...prevZones,
         [fromZoneId]: fromIcons,
         [toZoneId]: toIcons,
       };
+      
+      // Sauvegarder les zones dans localStorage après chaque modification
+      localStorage.setItem('iconZones', JSON.stringify(newZones));
+      
+      return newZones;
     });
   };
 
