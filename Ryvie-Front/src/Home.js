@@ -20,9 +20,86 @@ const importAll = (r) => {
 const images = importAll(require.context('./icons', false, /\.(png|jpe?g|svg)$/));
 const weatherImages = importAll(require.context('./weather_icons', false, /\.(png|jpe?g|svg)$/));
 const weatherIcons = importAll(require.context('./weather_icons', false, /\.(png|jpe?g|svg)$/));
-const exceptions = ['AppStore.png','settings.svg','user.png'];
 
-
+// Configuration centralisée des applications
+const APPS_CONFIG = {
+  'AppStore.jpeg': {
+    name: 'AppStore',
+    urlKey: 'APP_STORE',
+    showStatus: false,
+    isTaskbarApp: true,
+  },
+  'rCloud.png': {
+    name: 'rCloud',
+    urlKey: 'RCLOUD',
+    showStatus: true,
+    isTaskbarApp: false,
+    containerName: 'Cloud',
+  },
+  'Drive.png': {
+    name: 'Drive',
+    urlKey: 'DRIVE',
+    showStatus: false,
+    isTaskbarApp: false,
+  },
+  'Portainer.png': {
+    name: 'Portainer',
+    urlKey: 'PORTAINER',
+    showStatus: true,
+    isTaskbarApp: false,
+    containerName: 'Portainer',
+  },
+  'Outline.png': {
+    name: 'Outline',
+    urlKey: 'OUTLINE',
+    showStatus: true,
+    isTaskbarApp: false,
+    containerName: 'outline',
+  },
+  'rTransfer.png': {
+    name: 'rTransfer',
+    urlKey: 'RTRANSFER',
+    showStatus: true,
+    isTaskbarApp: false,
+    containerName: 'pingvin-share-pingvin-share-1',
+    useDirectWindow: true,
+  },
+  'rDrop.png': {
+    name: 'rDrop',
+    urlKey: 'RDROP',
+    showStatus: true,
+    isTaskbarApp: false,
+    containerName: 'snapdrop-nginx-1',
+  },
+  'rPictures.svg': {
+    name: 'rPictures',
+    urlKey: 'RPictures',
+    showStatus: true,
+    isTaskbarApp: false,
+    containerName: 'immich_server',
+  },
+  'user.svg': {
+    name: 'User',
+    urlKey: '',
+    showStatus: false,
+    isTaskbarApp: true,
+    route: '/user',
+  },
+  'transfer.svg': {
+    name: 'Transfer',
+    urlKey: '',
+    showStatus: false,
+    isTaskbarApp: true,
+    route: '/login',
+  },
+    'settings.svg': {
+    name: 'Settings',
+    urlKey: '',
+    showStatus: false,
+    isTaskbarApp: true,
+    route: '/settings',
+  },
+};
 
 // Types pour react-dnd
 const ItemTypes = {
@@ -32,6 +109,7 @@ const ItemTypes = {
 // Composant pour chaque icône
 const Icon = ({ id, src, zoneId, moveIcon, handleClick, showName = true, isActive }) => {
   const ref = React.useRef(null);
+  const appConfig = APPS_CONFIG[id] || {};
 
   const [{ isDragging }, drag] = useDrag({
     type: ItemTypes.ICON,
@@ -56,7 +134,7 @@ const Icon = ({ id, src, zoneId, moveIcon, handleClick, showName = true, isActiv
         }}
         onClick={() => handleClick(id)}
       >
-        {id.endsWith('.png') && !exceptions.includes(id) ? (
+        {appConfig.showStatus && (
           <div
             className="status-badge"
             style={{
@@ -70,9 +148,9 @@ const Icon = ({ id, src, zoneId, moveIcon, handleClick, showName = true, isActiv
               border: '2px solid white',
             }}
           ></div>
-        ) : null}
+        )}
       </div>
-      {showName && <p className="icon-name">{id.replace('.jpeg', '').replace('.png', '')}</p>}
+      {showName && <p className="icon-name">{appConfig.name || id.replace('.jpeg', '').replace('.png', '').replace('.svg', '')}</p>}
     </div>
   );
 };
@@ -115,34 +193,24 @@ const Zone = ({ zoneId, iconId, moveIcon, handleClick, showName, appStatus }) =>
   );
 };
 
+// Composant Taskbar
 const Taskbar = ({ handleClick }) => {
-  const taskbarIcons = [
-    images['AppStore.svg'],
-    images['rCloud.png'],
-    images['transfer.svg'],
-    images['user.svg'],
-    images['settings.svg'],
-  ];
+  // Filtrer les icônes de la barre des tâches à partir de la configuration
+  const taskbarApps = Object.entries(APPS_CONFIG)
+    .filter(([_, config]) => config.isTaskbarApp)
+    .map(([iconId, config]) => ({ iconId, config }));
 
   return (
     <div className="taskbar">
-      {taskbarIcons.map((iconSrc, index) => (
+      {taskbarApps.map(({ iconId, config }, index) => (
         <div key={index} className="taskbar-circle">
-          {index === 2 ? (
-            <Link to="/login">
-              <img src={iconSrc} alt={`Icon ${index}`} />
-            </Link>
-          ) : index === 3 ? (
-            <Link to="/user">
-              <img src={iconSrc} alt={`Icon ${index}`} />
-            </Link>
-          ) : index === 4 ? (
-            <Link to="/settings">
-              <img src={iconSrc} alt={`Icon ${index}`} />
+          {config.route ? (
+            <Link to={config.route}>
+              <img src={images[iconId]} alt={config.name} />
             </Link>
           ) : (
-            <div onClick={() => handleClick(Object.keys(images)[index])}>
-              <img src={iconSrc} alt={`Icon ${index}`} />
+            <div onClick={() => handleClick(iconId)}>
+              <img src={images[iconId]} alt={config.name} />
             </div>
           )}
         </div>
@@ -156,9 +224,9 @@ const Home = () => {
   const [accessMode, setAccessMode] = useState('private'); 
   const [zones, setZones] = useState({
     left: ['AppStore.jpeg'],
-    right: ['Drive.png'],
-    bottom1: ['rCloud.png'],
-    bottom2: ['Portainer.png'],
+    right: ['Portainer.png'],
+    bottom1: ['rPictures.svg'],
+    bottom2: ['rCloud.png'],
     bottom3: ['Outline.png'],
     bottom4: ['rTransfer.png'],
     bottom5: ['rDrop.png'],
@@ -167,9 +235,6 @@ const Home = () => {
     bottom8: [],
     bottom9: [],
     bottom10: [],
-    apps: Object.keys(images).filter(
-      (iconId) => !['AppStore.jpeg', 'Drive.png', 'rCloud.png', 'Outline.png','rTransfer.png'].includes(iconId)
-    ),
   });
 
   const [weather, setWeather] = useState({
@@ -180,12 +245,7 @@ const Home = () => {
   });
 
   const [serverStatus, setServerStatus] = useState(false);
-  const [appStatus, setAppStatus] = useState({
-    'rCloud.png': false,
-    'Portainer.png': false,
-    'Outline.png': false,
-    'rTransfer.png': false,
-  });
+  const [appStatus, setAppStatus] = useState({});
   const [isLoading, setIsLoading] = useState(false);
 
   const [mounted, setMounted] = useState(false);
@@ -214,20 +274,18 @@ const Home = () => {
     socket.on('containers', (data) => {
       console.log('Conteneurs actifs:', data.activeContainers);
   
-      const isCloudRunning = data.activeContainers.includes('Cloud');
-      const isPortainerRunning = data.activeContainers.includes('Portainer');
-      const isOutlineRunning = data.activeContainers.includes('outline');
-      const isrTransferRunning = data.activeContainers.includes('pingvin-share-pingvin-share-1');
-      const isDropRunning = data.activeContainers.includes('snapdrop-nginx-1');
-  
-      setAppStatus((prevStatus) => ({
-        ...prevStatus,
-        'rCloud.png': isCloudRunning,
-        'Portainer.png': isPortainerRunning,
-        'Outline.png': isOutlineRunning,
-        'rTransfer.png': isrTransferRunning,
-        'rDrop.png': isDropRunning,
-      }));
+      // Mettre à jour le statut des applications en fonction des conteneurs actifs
+      const newAppStatus = {};
+      
+      // Parcourir toutes les applications configurées
+      Object.entries(APPS_CONFIG).forEach(([appId, config]) => {
+        if (config.showStatus && config.containerName) {
+          // Vérifier si le conteneur associé à cette application est actif
+          newAppStatus[appId] = data.activeContainers.includes(config.containerName);
+        }
+      });
+      
+      setAppStatus(newAppStatus);
     });
   
     socket.on('disconnect', () => {
@@ -237,7 +295,6 @@ const Home = () => {
     return () => socket.disconnect();
   }, [accessMode]); //  Ajoute accessMode ici pour réexécuter le useEffect à chaque changement
   
-
   useEffect(() => {
     const fetchWeatherData = () => {
       const geoApiUrl = 'http://ip-api.com/json';
@@ -330,31 +387,22 @@ const Home = () => {
   };
 
   const handleClick = (iconId) => {
-    if (iconId === 'rCloud.png') {
-      openAppWindow(appUrls[iconId], false);
+    const appConfig = APPS_CONFIG[iconId];
+    
+    if (!appConfig || !appConfig.urlKey) {
+      console.log("Pas de configuration trouvée pour cette icône :", iconId);
       return;
     }
-    if (iconId === 'rTransfer.png') {
-      openAppWindow(appUrls[iconId], false);
-      return;
-    }
-
-    if (appUrls[iconId]) {
-      openAppWindow(appUrls[iconId], true);
+    
+    const appUrl = getAppUrl(appConfig.urlKey, accessMode);
+    
+    if (appUrl) {
+      openAppWindow(appUrl, !appConfig.useDirectWindow);
     } else {
       console.log("Pas d'URL trouvée pour cette icône :", iconId);
     }
   };
 
-  const appUrls = {
-    'AppStore.jpeg': getAppUrl('APP_STORE', accessMode),
-    'rCloud.png': getAppUrl('RCLOUD', accessMode),
-    'Portainer.png': getAppUrl('PORTAINER', accessMode),
-    'Outline.png': getAppUrl('OUTLINE', accessMode),
-    'rTransfer.png': getAppUrl('RTRANSFER', accessMode),
-    'rDrop.png': getAppUrl('RDROP', accessMode),
-  };
-  
   return (
     <div className={`home-container ${mounted ? 'slide-enter-active' : 'slide-enter'}`}>
       <DndProvider backend={HTML5Backend}>
