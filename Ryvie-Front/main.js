@@ -63,7 +63,7 @@ ipcMain.on('file-received', (event) => {
   }
 });
 
-function createWindowForUser(userId, accessMode = 'private', userRole) {
+function createWindowForUser(userId, accessMode, userRole) {
   const userSession = session.fromPartition(`persist:${userId}-${accessMode}-${userRole}`);
   console.log(`Création de la fenêtre pour l'utilisateur: ${userId} avec le mode ${accessMode} et le rôle ${userRole}`);
 
@@ -178,20 +178,26 @@ async function fetchUsers(accessMode) {
 }
 
 // Add a new IPC handler to update the session partition without creating a new window
-ipcMain.handle('update-session-partition', async (event, userId, accessMode) => {
+ipcMain.handle('update-session-partition', async (event, userId, accessMode, userRole) => {
   console.log(`Mise à jour de la partition de session pour l'utilisateur: ${userId} avec le mode ${accessMode}`);
   
-  // Fetch users to get the role
-  let userRole = 'User';
-  try {
-    const users = await fetchUsers(accessMode);
-    const userObj = users.find(user => user.id === userId || user.name === userId);
-    if (userObj) {
-      userRole = userObj.role || 'User';
+  // Si userRole n'est pas fourni, essayer de le récupérer depuis l'API
+  if (!userRole) {
+    try {
+      const users = await fetchUsers(accessMode);
+      const userObj = users.find(user => user.id === userId || user.name === userId);
+      if (userObj) {
+        userRole = userObj.role || 'User';
+      } else {
+        userRole = 'User';
+      }
+    } catch (err) {
+      console.error('Error getting user role:', err.message);
+      userRole = 'User';
     }
-  } catch (err) {
-    console.error('Error getting user role:', err.message);
   }
+  
+  console.log(`Partition de session mise à jour pour ${userId} en mode ${accessMode} avec le rôle ${userRole}`);
   
   // Get the sender window
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
@@ -330,7 +336,7 @@ async function initializeDefaultUser() {
       if (defaultUser) {
         console.log(`Default user found: ${defaultUser.name} with role ${defaultUser.role}`);
         // Create window for the default user with their role
-        createWindowForUser(defaultUser.id);
+        createWindowForUser(defaultUser.id, 'private', defaultUser.role);
       } else {
         console.log(`Default user "${defaultUserId}" not found in LDAP, using as is`);
         //createWindowForUser(defaultUserId);

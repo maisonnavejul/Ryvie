@@ -141,10 +141,13 @@ const Welcome = () => {
     
     // Update the session partition without creating a new window
     if (window.electronAPI && currentUser) {
+      // Récupérer le rôle de l'utilisateur depuis localStorage
+      const userRole = localStorage.getItem('currentUserRole') || 'User';
+      
       // Get the current session's cookies and update the partition
-      window.electronAPI.invoke('update-session-partition', currentUser, 'private')
+      window.electronAPI.invoke('update-session-partition', currentUser, 'private', userRole)
         .then(() => {
-          console.log(`Session mise à jour pour ${currentUser} en mode privé`);
+          console.log(`Session mise à jour pour ${currentUser} en mode privé avec le rôle ${userRole}`);
         })
         .catch(err => {
           console.error('Erreur lors de la mise à jour de la session:', err);
@@ -160,13 +163,16 @@ const Welcome = () => {
   const handlePublicAccess = () => {
     // Store the access mode in localStorage
     localStorage.setItem('accessMode', 'public');
-    
+
     // Update the session partition without creating a new window
     if (window.electronAPI && currentUser) {
+      // Récupérer le rôle de l'utilisateur depuis localStorage
+      const userRole = localStorage.getItem('currentUserRole') || 'User';
+      
       // Get the current session's cookies and update the partition
-      window.electronAPI.invoke('update-session-partition', currentUser, 'public')
+      window.electronAPI.invoke('update-session-partition', currentUser, 'public', userRole)
         .then(() => {
-          console.log(`Session mise à jour pour ${currentUser} en mode public`);
+          console.log(`Session mise à jour pour ${currentUser} en mode public avec le rôle ${userRole}`);
         })
         .catch(err => {
           console.error('Erreur lors de la mise à jour de la session:', err);
