@@ -61,7 +61,7 @@ const APPS_CONFIG = {
     urlKey: 'RTRANSFER',
     showStatus: true,
     isTaskbarApp: false,
-    containerName: 'pingvin-share-pingvin-share-1',
+    containerName: 'ryvie-rtransfer-pingvin-share-1',
     useDirectWindow: true,
   },
   'rDrop.png': {

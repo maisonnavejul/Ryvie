@@ -2,6 +2,8 @@ const { app, BrowserWindow, ipcMain, session, dialog } = require('electron');
 const path = require('path');
 const { fork } = require('child_process');
 const fs = require('fs');
+const axios = require('axios');
+const { getServerUrl } = require('./src/config/urls');
 
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('disable-software-rasterizer');
@@ -61,9 +63,9 @@ ipcMain.on('file-received', (event) => {
   }
 });
 
-function createWindowForUser(userId, accessMode = 'private') {
-  const userSession = session.fromPartition(`persist:${userId}-${accessMode}`);
-  console.log(`Création de la fenêtre pour l'utilisateur: ${userId} avec le mode ${accessMode}`);
+function createWindowForUser(userId, accessMode = 'private', userRole) {
+  const userSession = session.fromPartition(`persist:${userId}-${accessMode}-${userRole}`);
+  console.log(`Création de la fenêtre pour l'utilisateur: ${userId} avec le mode ${accessMode} et le rôle ${userRole}`);
 
   userSession.on('will-download', (event, item, webContents) => {
     const filePath = path.join(downloadPath, item.getFilename());
@@ -91,9 +93,13 @@ function createWindowForUser(userId, accessMode = 'private') {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      partition: `persist:${userId}-${accessMode}`
+      partition: `persist:${userId}-${accessMode}-${userRole}`
     },
+    autoHideMenuBar: true, // Cache automatiquement la barre de menu ( enlever si besoin)
+    frame: true, // Garde le cadre de la fenêtre pour pouvoir la déplacer ( enlever si besoin)
   });
+
+  window.setMenu(null); // Supprimer complètement le menu ( enlever si besoin)
 
   window.webContents.setUserAgent(
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
@@ -106,9 +112,13 @@ function createWindowForUser(userId, accessMode = 'private') {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        partition: `persist:${userId}-${accessMode}`
-      }
+        partition: `persist:${userId}-${accessMode}-${userRole}`
+      },
+      autoHideMenuBar: true, // Cache automatiquement la barre de menu ( enlever si besoin)
+      frame: true, // Garde le cadre de la fenêtre pour pouvoir la déplacer ( enlever si besoin)
     });
+
+    childWindow.setMenu(null); // Supprimer complètement le menu de la fenêtre enfant ( enlever si besoin)
 
     childWindow.webContents.setUserAgent(window.webContents.getUserAgent());
     childWindow.loadURL(url);
@@ -125,32 +135,63 @@ function createWindowForUser(userId, accessMode = 'private') {
     window.webContents.send('set-current-user', userId);
   });
 
-  userWindows.set(`${userId}-${accessMode}`, window);
+  userWindows.set(`${userId}-${accessMode}-${userRole}`, window);
   return window;
 }
 
 // Add a new IPC handler to create windows with specific access mode
-ipcMain.handle('create-user-window-with-mode', async (event, userId, accessMode) => {
-  if (userWindows.has(`${userId}-${accessMode}`)) {
-    const existingWindow = userWindows.get(`${userId}-${accessMode}`);
+ipcMain.handle('create-user-window-with-mode', async (event, userId, accessMode, userRole) => {
+  if (userWindows.has(`${userId}-${accessMode}-${userRole}`)) {
+    const existingWindow = userWindows.get(`${userId}-${accessMode}-${userRole}`);
     if (!existingWindow.isDestroyed()) {
       existingWindow.focus();
       return;
     }
   }
-  createWindowForUser(userId, accessMode);
+  createWindowForUser(userId, accessMode, userRole);
   return true;
 });
 
 // Modify the existing create-user-window handler to use the default mode
-ipcMain.handle('create-user-window', async (event, userId) => {
+ipcMain.handle('create-user-window', async (event, userId, userRole) => {
   // Default to 'private' mode for backward compatibility
-  return ipcMain.handle('create-user-window-with-mode', event, userId, 'private');
+  return ipcMain.handle('create-user-window-with-mode', event, userId, 'private', userRole);
 });
+
+// Function to fetch users from the API
+async function fetchUsers(accessMode) {
+  try {
+    const serverUrl = getServerUrl(accessMode);
+    const response = await axios.get(`${serverUrl}/api/users`);
+    const users = response.data.map(user => ({
+      name: user.name || user.uid,
+      id: user.uid,
+      email: user.email || 'Non défini',
+      role: user.role || 'User'
+    }));
+    console.log('Users fetched successfully:', users.length);
+    return users;
+  } catch (err) {
+    console.error('Error fetching users:', err.message);
+    return [];
+  }
+}
 
 // Add a new IPC handler to update the session partition without creating a new window
 ipcMain.handle('update-session-partition', async (event, userId, accessMode) => {
   console.log(`Mise à jour de la partition de session pour l'utilisateur: ${userId} avec le mode ${accessMode}`);
+  
+  // Fetch users to get the role
+  let userRole = 'User';
+  try {
+    const users = await fetchUsers(accessMode);
+    const userObj = users.find(user => user.id === userId || user.name === userId);
+    if (userObj) {
+      userRole = userObj.role || 'User';
+    }
+  } catch (err) {
+    console.error('Error getting user role:', err.message);
+  }
   
   // Get the sender window
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
@@ -172,18 +213,19 @@ ipcMain.handle('update-session-partition', async (event, userId, accessMode) => 
   }
   
   // Add the new mapping
-  userWindows.set(`${userId}-${accessMode}`, senderWindow);
+  userWindows.set(`${userId}-${accessMode}-${userRole}`, senderWindow);
   
   // Store the current user and access mode in the window object for future reference
   senderWindow.userId = userId;
   senderWindow.accessMode = accessMode;
+  senderWindow.userRole = userRole;
   
-  console.log(`Partition de session mise à jour pour ${userId} en mode ${accessMode}`);
+  console.log(`Partition de session mise à jour pour ${userId} en mode ${accessMode} avec le rôle ${userRole}`);
   return true;
 });
 
-ipcMain.handle('clear-user-session', async (event, userId, accessMode = 'private') => {
-  const userSession = session.fromPartition(`persist:${userId}-${accessMode}`);
+ipcMain.handle('clear-user-session', async (event, userId, accessMode = 'private', userRole) => {
+  const userSession = session.fromPartition(`persist:${userId}-${accessMode}-${userRole}`);
   await userSession.clearStorageData();
 
   if (userWindows.has(`${userId}-${accessMode}`)) {
@@ -266,10 +308,51 @@ ipcMain.on('update-access-mode', (event, mode) => {
   }
 });
 
+// Initialize the default user with role from LDAP
+async function initializeDefaultUser() {
+  try {
+    // Default user ID
+    const defaultUserId = 'jules';
+    
+    // Try to fetch users to get the role for the default user
+    try {
+      const users = await fetchUsers('private');
+      console.log('Fetched users for initialization:', users.length);
+      
+      // Look for jules in the users
+      const defaultUser = users.find(user => 
+        user.id === defaultUserId || 
+        user.name === defaultUserId || 
+        user.id.toLowerCase() === defaultUserId || 
+        user.name.toLowerCase() === defaultUserId
+      );
+      
+      if (defaultUser) {
+        console.log(`Default user found: ${defaultUser.name} with role ${defaultUser.role}`);
+        // Create window for the default user with their role
+        createWindowForUser(defaultUser.id);
+      } else {
+        console.log(`Default user "${defaultUserId}" not found in LDAP, using as is`);
+        //createWindowForUser(defaultUserId);
+      }
+    } catch (error) {
+      console.error('Error fetching users for initialization:', error);
+      //createWindowForUser(defaultUserId);
+    }
+    
+    // Start the UDP backend
+    startUdpBackend();
+  } catch (error) {
+    console.error('Error initializing default user:', error);
+    // Fallback to just using 'jules' without role information
+    //createWindowForUser('jules');
+    startUdpBackend();
+  }
+}
+
 app.whenReady().then(() => {
-  // Set Jules as the default user
-  createWindowForUser('jules');
-  startUdpBackend();
+  // Initialize the default user
+  initializeDefaultUser();
 });
 
 app.on('window-all-closed', () => {
@@ -279,7 +362,7 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    // Set Jules as the default user
-    createWindowForUser('jules');
+    // Initialize the default user
+    initializeDefaultUser();
   }
 });

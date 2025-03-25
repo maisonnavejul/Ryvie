@@ -16,8 +16,7 @@ const UserLogin = () => {
     const storedMode = localStorage.getItem('accessMode') || 'private';
     setAccessMode(storedMode);
     
-    // Définir Jules comme utilisateur par défaut
-    localStorage.setItem('currentUser', 'Jules');
+
     
     const fetchUsers = async () => {
       try {
@@ -51,10 +50,14 @@ const UserLogin = () => {
       
       // Récupérer le mode d'accès actuel (privé ou public)
       const accessMode = localStorage.getItem('accessMode') || 'private';
+      const userObj = users.find(user => user.id === userId);
+      const userRole = userObj ? userObj.role : '';
+      localStorage.setItem('currentUserRole', userRole);
+      console.log('userRole', userRole);
       
       // Ouvrir une nouvelle fenêtre pour cet utilisateur avec le mode d'accès spécifié
-      await window.electronAPI.invoke('create-user-window-with-mode', userName, accessMode);
-      setMessage(`Fenêtre ouverte pour ${userName} en mode ${accessMode}`);
+      await window.electronAPI.invoke('create-user-window-with-mode', userName, accessMode, userRole);
+      setMessage(`Fenêtre ouverte pour ${userName} en mode ${accessMode} avec le rôle ${userRole}`);
     } catch (error) {
       setMessage(`Erreur : ${error.message}`);
     }

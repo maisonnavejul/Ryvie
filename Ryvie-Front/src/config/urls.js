@@ -15,8 +15,8 @@ const BASE_URLS = {
   // URLs des applications
   APPS: {
     APP_STORE: {
-      PUBLIC: 'http://user1.appstore.ryvie.fr',
-      PRIVATE: 'http://ryvie.local:3000'
+      PUBLIC: 'http://appstore.test.jules.ryvie.fr',
+      PRIVATE: 'http://ryvie.local:5173'
     },
     RCLOUD: {
       PUBLIC: 'https://rcloud.test.jules.ryvie.fr',
