@@ -34,7 +34,7 @@ html, body {
   align-items: center;
   justify-content: space-between;
   padding: 20px 24px;
-  background: linear-gradient(135deg, #4776E6 0%, #8E54E9 100%);
+  background: linear-gradient(135deg, #a2beff 0%, #2b47ff 100%);
   color: white;
   border-radius: 16px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
@@ -456,7 +456,7 @@ html, body {
 .submit-btn {
   width: 100%;
   padding: 12px 24px;
-  background: linear-gradient(135deg, #4776E6 0%, #8E54E9 100%);
+  background: linear-gradient(135deg,#a2beff 0%, #2b47ff 100%);
   color: white;
   border: none;
   border-radius: 12px;
