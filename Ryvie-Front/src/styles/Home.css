@@ -5,6 +5,7 @@ body, html {
   margin: 0;
   padding: 0;
   height: 100%;
+  color: #ffffff; /* Couleur de texte par défaut pour tout le document */
 }
 
 /* Conteneur principal */
@@ -41,18 +42,7 @@ body, html {
   animation: backgroundPull 0.8s cubic-bezier(0.23, 1, 0.32, 1) forwards;
 }
 
-@keyframes zoomFromOverlay {
-  0% {
-    opacity: 0;
-    transform: translateZ(-2000px) scale(0.2);
-    filter: blur(20px) brightness(0.3);
-  }
-  100% {
-    opacity: 1;
-    transform: translateZ(0) scale(1);
-    filter: blur(0) brightness(1);
-  }
-}
+
 
 @keyframes backgroundPull {
   0% {
@@ -121,6 +111,10 @@ body, html {
   align-items: center;
   gap: 20px;
   z-index: 1000; /* Pour que la barre soit au-dessus du contenu */
+  opacity: 0;
+  transform: translateY(100%);
+  animation: taskbarSlideUp 0.6s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+  animation-delay: 0.3s;
 }
 
 /* Cercles dans la barre des tâches */
@@ -159,14 +153,18 @@ body, html {
 }
 .top-zones {
   padding-top: 40px;
+  opacity: 0;
+  animation: staggerZones 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  animation-delay: 0.3s;
 }
 
 /* Titre de la page */
 .title {
-  color: white;
-  font-size: 3vw;
-  text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+  font-size: 24px;
+  font-weight: bold;
   margin-bottom: 20px;
+  color: #ffffff; /* Couleur de texte foncée pour le titre */
+  text-align: center;
 }
 
 /* Contenu principal avec les zones à gauche et à droite du widget */
@@ -185,6 +183,9 @@ body, html {
   justify-content: center;
   gap: 30px;
   margin-top: 20px;
+  opacity: 0;
+  animation: staggerZones 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  animation-delay: 0.5s;
 }
 
 /* Styles pour chaque zone */
@@ -196,7 +197,11 @@ body, html {
   height: 100px;
   position: relative;
   transition: background-color 0.3s;
+  opacity: 0;
+  transform: translateY(30px);
+  animation: zoneAppear 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards;
 }
+
 /* Zone spécifique pour "left" et "right" avec un espacement supérieur */
 .zone-left,
 .zone-right {
@@ -215,6 +220,7 @@ body, html {
   text-align: center;
   font-weight: bold;
   font-size: 12px;
+  color: #ffffff; /* Couleur de texte foncée pour les titres de zones */
 }
 
 /* Icône */
@@ -231,17 +237,10 @@ body, html {
   z-index: 1; /* Donne une priorité visuelle à l'icône */
 }
 
-/* Nom des icônes */
-.icon-name {
-  position: absolute;
-  bottom: -37px; /* Positionne le nom en dessous de l'icône */
-  left: 50%;
-  transform: translateX(-50%); /* Centre le texte horizontalement */
-  font-size: 16px;
-  color: white;
-  text-align: center;
-  font-weight: bold;
-  z-index: 0; /* Assure que le texte est derrière l'icône */
+.icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover; /* Pour que l'image couvre tout le cercle */
 }
 
 .icon:hover {
@@ -258,14 +257,14 @@ body, html {
 .widget-title {
   margin: 0;
   font-size: 2vw;
-  color: #333;
+  color: #333; /* Couleur de texte foncée pour les titres de widgets */
 }
 
 /* Contenu du widget */
 .widget-content {
   margin-top: 10px;
   font-size: 1.5vw;
-  color: #555;
+  color: #333; /* Couleur de texte plus foncée pour le contenu du widget */
 }
 
 /* Ajustement du widget */
@@ -301,6 +300,8 @@ body, html {
   position: relative; /* Conteneur pour les éléments positionnés */
   width: 100%;
   height: 100%;
+  color: #fff; /* Texte blanc pour le widget météo qui a un fond coloré */
+  text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.5); /* Ombre pour améliorer la lisibilité */
 }
 
 .weather-city {
@@ -379,7 +380,7 @@ body, html {
   border-radius: 5px;
   font-size: 14px;
   font-weight: bold;
-  color: white;
+  color: #ffffff; /* Couleur de texte foncée pour le statut du serveur */
 }
 
 .server-status.disconnected {
@@ -403,4 +404,64 @@ body, html {
   width: 20px;
   height: 20px;
   filter: invert(1);
+}
+
+/* Animation en cascade pour les zones du bas */
+.bottom-zones .zone:nth-child(1) { animation-delay: 0.5s; }
+.bottom-zones .zone:nth-child(2) { animation-delay: 0.55s; }
+.bottom-zones .zone:nth-child(3) { animation-delay: 0.6s; }
+.bottom-zones .zone:nth-child(4) { animation-delay: 0.65s; }
+.bottom-zones .zone:nth-child(5) { animation-delay: 0.7s; }
+.bottom-zones .zone:nth-child(6) { animation-delay: 0.75s; }
+.bottom-zones .zone:nth-child(7) { animation-delay: 0.8s; }
+.bottom-zones .zone:nth-child(8) { animation-delay: 0.85s; }
+.bottom-zones .zone:nth-child(9) { animation-delay: 0.9s; }
+.bottom-zones .zone:nth-child(10) { animation-delay: 0.95s; }
+
+/* Animation de pulsation pour les applications actives */
+.icon.active {
+  animation: pulse-animation 2s infinite;
+}
+
+@keyframes staggerZones {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes zoneAppear {
+  0% {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes taskbarSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-animation {
+  0% {
+    box-shadow: 0 0 0 0 rgba(0, 123, 255, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(0, 123, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 123, 255, 0);
+  }
 }
