@@ -219,6 +219,77 @@ app.get('/api/users', async (req, res) => {
     );
   });
 });
+// Endpoint : Authentification utilisateur LDAP
+app.use(express.json()); // Pour parser le JSON dans les requêtes POST
+
+app.post('/api/authenticate', (req, res) => {
+  const { uid, password } = req.body;
+
+  if (!uid || !password) {
+    return res.status(400).json({ error: 'UID et mot de passe requis' });
+  }
+
+  const ldapClient = ldap.createClient({ url: ldapConfig.url });
+
+  // Première connexion pour rechercher le DN utilisateur
+  ldapClient.bind(ldapConfig.bindDN, ldapConfig.bindPassword, (err) => {
+    if (err) {
+      console.error('Erreur de connexion LDAP initiale:', err);
+      return res.status(500).json({ error: 'Échec de connexion LDAP initiale' });
+    }
+
+    const userFilter = `(&(uid=${uid})${ldapConfig.userFilter})`;
+
+    ldapClient.search(ldapConfig.userSearchBase, {
+      filter: userFilter,
+      scope: 'sub',
+      attributes: ['dn', 'cn', 'mail', 'uid'],
+    }, (err, ldapRes) => {
+      if (err) {
+        console.error('Erreur de recherche utilisateur LDAP:', err);
+        return res.status(500).json({ error: 'Erreur de recherche utilisateur' });
+      }
+
+      let userEntry;
+
+      ldapRes.on('searchEntry', (entry) => {
+        userEntry = entry;
+      });
+
+      ldapRes.on('end', () => {
+        if (!userEntry) {
+          ldapClient.unbind();
+          return res.status(401).json({ error: 'Utilisateur non trouvé' });
+        }
+
+        const userDN = userEntry.pojo.objectName;
+
+        // Tente de connecter l'utilisateur avec son propre DN et mot de passe
+        const userAuthClient = ldap.createClient({ url: ldapConfig.url });
+        userAuthClient.bind(userDN, password, (err) => {
+          if (err) {
+            console.error('Échec de l\'authentification utilisateur:', err);
+            ldapClient.unbind();
+            return res.status(401).json({ error: 'Identifiant ou mot de passe incorrect' });
+          }
+
+          // Authentification réussie
+          ldapClient.unbind();
+          userAuthClient.unbind();
+
+          const user = {
+            dn: userDN,
+            uid: userEntry.pojo.attributes.find(attr => attr.type === 'uid')?.values[0],
+            name: userEntry.pojo.attributes.find(attr => attr.type === 'cn')?.values[0],
+            email: userEntry.pojo.attributes.find(attr => attr.type === 'mail')?.values[0],
+          };
+
+          res.json({ message: 'Authentification réussie', user });
+        });
+      });
+    });
+  });
+});
 // Serveur HTTP pour signaler la détection du serveur
 app.get('/status', (req, res) => {
   res.status(200).json({
