@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios'; // Import axios
 import './styles/Welcome.css';
 import serverIcon from './icons/lettre-r.png';
 
@@ -8,6 +9,57 @@ const Welcome = () => {
   const [unlocked, setUnlocked] = useState(false);
   const [serverIP, setServerIP] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState(null);
+
+  // Receive user ID directly from main process
+  useEffect(() => {
+    // Check if electronAPI is available
+    if (window.electronAPI && window.electronAPI.onSetCurrentUser) {
+      // Add event listener for 'set-current-user'
+      const handleSetCurrentUser = (_, userId) => {
+        console.log('User ID received from main process:', userId);
+        setCurrentUser(userId);
+        // Also update localStorage for compatibility with existing code
+        localStorage.setItem('currentUser', userId);
+      };
+      
+      window.electronAPI.onSetCurrentUser(handleSetCurrentUser);
+      
+      // In Electron, we typically can't remove IPC listeners the same way
+      // The component will be unmounted and garbage collected
+      return () => {};
+    }
+  }, []);
+
+  // Retrieve the user from localStorage as fallback
+  useEffect(() => {
+    const storedUser = localStorage.getItem('currentUser');
+    if (storedUser) {
+      setCurrentUser(storedUser);
+    }
+  }, []);
+
+  // Effet pour récupérer l'utilisateur actuel depuis localStorage
+  useEffect(() => {
+    
+    // Vérifier s'il y a un utilisateur dans localStorage
+    const storedUser = localStorage.getItem('currentUser');
+    console.log('Utilisateur récupéré:', storedUser);
+    if (storedUser) {
+      setCurrentUser(storedUser);
+    }
+
+    // Écouter les changements de localStorage (pour les fenêtres multiples)
+    const handleStorageChange = (e) => {
+      if (e.key === 'currentUser' && e.newValue) {
+        console.log('Changement d\'utilisateur détecté:', e.newValue);
+        setCurrentUser(e.newValue);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   useEffect(() => {
     console.log('Recherche d\'un serveur Ryvie...');
@@ -24,9 +76,21 @@ const Welcome = () => {
       // Ajouter le gestionnaire d'événements pour 'ryvie-ip'
       window.electronAPI.onRyvieIP(handleServerIP);
 
+      // Demander l'IP initiale du serveur (au cas où elle a été détectée avant le chargement de ce composant)
+      window.electronAPI.requestInitialServerIP().then(ip => {
+        if (ip) {
+          console.log(`IP initiale récupérée : ${ip}`);
+          setServerIP(ip);
+          setLoading(false);
+        }
+      }).catch(err => {
+        console.error('Erreur lors de la récupération de l\'IP initiale:', err);
+      });
+
       // Nettoyage de l'effet
       return () => {
-        window.electronAPI.onRyvieIP(handleServerIP); // Nettoie l'écouteur
+        // In Electron, we typically can't remove IPC listeners the same way
+        // The component will be unmounted and garbage collected
       };
     } else {
       // Si l'API n'est pas disponible, simuler un serveur trouvé pour le développement web
@@ -35,37 +99,97 @@ const Welcome = () => {
       setLoading(false);
     }
 
-    // Timeout pour arrêter la recherche après 10 secondes
+    // Add a delay to the server detection to make it more visible
+    const checkServer = async () => {
+      try {
+        const response = await axios.get('http://ryvie.local:3002/api/server-status');
+        if (response.data.status === 'online') {
+          // Add a deliberate delay to show the loading animation
+          setTimeout(() => {
+            setServerIP('ryvie.local');
+            setLoading(false);
+          }, 2000); // 2-second delay to make the server detection more visible
+        }
+      } catch (error) {
+        console.error('Erreur lors de la vérification du serveur:', error);
+      }
+    };
+
+    // Optimize initial loading
+    const preloadAssets = () => {
+      // Create a hidden image element to preload the server icon
+      const img = new Image();
+      img.src = serverIcon;
+    };
+    
+    preloadAssets();
+    checkServer();
+    
+    // Longer timeout for server detection to ensure users see the loading animation
     const timeout = setTimeout(() => {
       setLoading(false);
-    }, 10000);
-
+    }, 8000); // Increased from 5000ms to 8000ms
+    
     return () => {
-      clearTimeout(timeout); // Nettoie le timeout
+      clearTimeout(timeout);
     };
   }, []);
 
   const handlePrivateAccess = () => {
+    // Store the access mode in localStorage
     localStorage.setItem('accessMode', 'private');
+    
+    // Update the session partition without creating a new window
+    if (window.electronAPI && currentUser) {
+      // Récupérer le rôle de l'utilisateur depuis localStorage
+      const userRole = localStorage.getItem('currentUserRole') || 'User';
+      
+      // Get the current session's cookies and update the partition
+      window.electronAPI.invoke('update-session-partition', currentUser, 'private', userRole)
+        .then(() => {
+          console.log(`Session mise à jour pour ${currentUser} en mode privé avec le rôle ${userRole}`);
+        })
+        .catch(err => {
+          console.error('Erreur lors de la mise à jour de la session:', err);
+        });
+    }
+    
     setUnlocked(true);
     setTimeout(() => {
       navigate('/home');
-    }, 50);
+    }, 10);
   };
   
   const handlePublicAccess = () => {
+    // Store the access mode in localStorage
     localStorage.setItem('accessMode', 'public');
+
+    // Update the session partition without creating a new window
+    if (window.electronAPI && currentUser) {
+      // Récupérer le rôle de l'utilisateur depuis localStorage
+      const userRole = localStorage.getItem('currentUserRole') || 'User';
+      
+      // Get the current session's cookies and update the partition
+      window.electronAPI.invoke('update-session-partition', currentUser, 'public', userRole)
+        .then(() => {
+          console.log(`Session mise à jour pour ${currentUser} en mode public avec le rôle ${userRole}`);
+        })
+        .catch(err => {
+          console.error('Erreur lors de la mise à jour de la session:', err);
+        });
+    }
+    
     setUnlocked(true);
     setTimeout(() => {
       navigate('/home');
-    }, 50);
+    }, 10);
   };
   
   return (
     <div className="welcome-body">
       <div className="welcome-overlay">
         <div className="welcome-text-container">
-          <h1>Bonjour Jules !</h1>
+          <h1>Bonjour {currentUser} !</h1>
         </div>
         <div className={`welcome-container ${unlocked ? 'welcome-hidden' : ''}`}>
           {loading && !serverIP ? (
@@ -93,7 +217,7 @@ const Welcome = () => {
         </div>
         <div className="welcome-buttons-container">
           <button
-            className="welcome-button"
+            className="welcome-button network-button"
             onClick={handlePrivateAccess}
             disabled={!serverIP}
             aria-label={serverIP ? 'Accès depuis la maison' : 'En attente de connexion...'}
@@ -108,7 +232,7 @@ const Welcome = () => {
             </div>
           </button>
           <button
-            className="welcome-button"
+            className="welcome-button network-button"
             onClick={handlePublicAccess}
             aria-label="Accès distant"
           >

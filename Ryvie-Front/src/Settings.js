@@ -2,17 +2,18 @@ import React, { useState, useEffect } from 'react';
 import './styles/Settings.css';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+const { getServerUrl } = require('./config/urls');
 
 const Settings = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     storageUsed: 0,
-    storageLimit: 1000, // Go
+    storageLimit: 0, // Go
     cpuUsage: 0,
     ramUsage: 0,
-    activeUsers: 0,
-    totalFiles: 0,
+    activeUsers: 1,
+    totalFiles: 110,
     backupStatus: 'Completed',
     lastBackup: '2024-01-09 14:30',
   });
@@ -30,6 +31,7 @@ const Settings = () => {
     autoDeletionPeriod: '30',
     storageLocation: 'local',
     redundancyLevel: 'raid1',
+    downloadPath: '',
   });
 
   const [applications, setApplications] = useState([
@@ -101,12 +103,19 @@ const Settings = () => {
     },
   ]);
 
-  // Simuler le chargement des données
+  const [changeStatus, setChangeStatus] = useState({ show: false, success: false });
+  const [accessMode, setAccessMode] = useState('private');
+
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Simule un appel API
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Charger le dossier de téléchargement actuel
+        const path = await window.electronAPI.getDownloadFolder();
+        setSettings(prev => ({
+          ...prev,
+          downloadPath: path
+        }));
+        
         setLoading(false);
       } catch (error) {
         console.error('Error fetching settings:', error);
@@ -116,11 +125,125 @@ const Settings = () => {
     fetchData();
   }, []);
 
-  const handleSettingChange = (setting, value) => {
-    setSettings(prev => ({
+  // Récupération des informations serveur
+  useEffect(() => {
+    // Récupère la valeur de accessMode depuis le localStorage
+    const storedMode = localStorage.getItem('accessMode') || 'private';
+    setAccessMode(storedMode);
+    
+    // Détermine l'URL du serveur en fonction du mode d'accès
+    const baseUrl = getServerUrl(storedMode);
+    console.log("Connexion à :", baseUrl);
+    
+    // Fonction pour récupérer les informations serveur
+    const fetchServerInfo = async () => {
+      try {
+        const response = await axios.get(`${baseUrl}/api/server-info`);
+        console.log('Informations serveur reçues:', response.data);
+        updateServerStats(response.data);
+      } catch (error) {
+        console.error('Erreur lors de la récupération des informations serveur:', error);
+      }
+    };
+    
+    // Appel initial
+    fetchServerInfo();
+    
+    // Configuration de l'intervalle pour les mises à jour régulières
+    const intervalId = setInterval(fetchServerInfo, 2000);
+    
+    // Nettoyage lors du démontage du composant
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [accessMode]); // Réexécute l'effet si le mode d'accès change
+  
+  // Fonction pour mettre à jour les statistiques du serveur
+  const updateServerStats = (data) => {
+    if (!data) return;
+    
+    // Extraire les valeurs de stockage
+    let storageUsed = 0;
+    let storageTotal = 1000; // Valeur par défaut
+    
+    if (data.stockage) {
+      // Convertir les valeurs de GB en nombre
+      const usedMatch = data.stockage.utilise.match(/(\d+(\.\d+)?)/);
+      const totalMatch = data.stockage.total.match(/(\d+(\.\d+)?)/);
+      
+      if (usedMatch && totalMatch) {
+        storageUsed = parseFloat(usedMatch[0]);
+        storageTotal = parseFloat(totalMatch[0]);
+      }
+    }
+    
+    // Extraire les valeurs de performance
+    let cpuUsage = 30; // Valeur par défaut
+    let ramUsage = 40; // Valeur par défaut
+    
+    if (data.performance) {
+      // Convertir les pourcentages en nombres
+      const cpuMatch = data.performance.cpu.match(/(\d+(\.\d+)?)/);
+      const ramMatch = data.performance.ram.match(/(\d+(\.\d+)?)/);
+      
+      if (cpuMatch) cpuUsage = parseFloat(cpuMatch[0]);
+      if (ramMatch) ramUsage = parseFloat(ramMatch[0]);
+    }
+    
+    // Mettre à jour les statistiques
+    setStats(prev => ({
       ...prev,
-      [setting]: value
+      storageUsed: storageUsed,
+      storageLimit: storageTotal,
+      cpuUsage: cpuUsage,
+      ramUsage: ramUsage
     }));
+  };
+
+  // Fonction pour changer le mode d'accès
+  const handleAccessModeChange = (newMode) => {
+    // Mettre à jour le localStorage
+    localStorage.setItem('accessMode', newMode);
+    
+    // Mettre à jour l'état local
+    setAccessMode(newMode);
+    
+    // Notifier le processus principal du changement
+    window.electronAPI.updateAccessMode(newMode);
+    
+    // Afficher un message de confirmation
+    setChangeStatus({
+      show: true,
+      success: true,
+      message: `Mode d'accès changé pour: ${newMode === 'public' ? 'Public' : 'Privé'}`
+    });
+    
+    // Masquer le message après 3 secondes
+    setTimeout(() => {
+      setChangeStatus({ show: false, success: false });
+    }, 3000);
+  };
+
+  const handleSettingChange = async (setting, value) => {
+    if (setting === 'downloadPath') {
+      const newPath = await window.electronAPI.changeDownloadFolder();
+      if (newPath) {
+        setSettings(prev => ({
+          ...prev,
+          downloadPath: newPath
+        }));
+        setChangeStatus({ show: true, success: true });
+        setTimeout(() => setChangeStatus({ show: false, success: false }), 3000);
+      } else {
+        setChangeStatus({ show: true, success: false });
+        setTimeout(() => setChangeStatus({ show: false, success: false }), 3000);
+      }
+    } else {
+      setSettings(prev => ({
+        ...prev,
+        [setting]: value
+      }));
+    }
   };
 
   const handleAppAction = (appId, action) => {
@@ -251,7 +374,35 @@ const Settings = () => {
           </div>
         </div>
       </section>
-
+      {/* Section Téléchargements */}
+      <section className="settings-section">
+        <h2>Configuration des téléchargements</h2>
+        <div className="settings-grid">
+          <div className="setting-item">
+            <div className="setting-info">
+              <h3>Dossier de téléchargement</h3>
+              <p>Emplacement où seront sauvegardés les fichiers téléchargés</p>
+              {changeStatus.show && (
+                <div className={`status-message ${changeStatus.success ? 'success' : 'error'}`}>
+                  {changeStatus.success 
+                    ? "✓ Dossier modifié avec succès" 
+                    : "✗ Erreur lors du changement de dossier"}
+                </div>
+              )}
+            </div>
+            <div className="setting-control">
+              <button 
+                onClick={() => handleSettingChange('downloadPath')} 
+                className="setting-button"
+              >
+                <span className="setting-value">{settings.downloadPath}</span>
+                <span className="setting-action">Modifier</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+      
       {/* Section Paramètres */}
       <section className="settings-section">
         <h2>Configuration du Cloud</h2>
@@ -400,6 +551,37 @@ const Settings = () => {
                 <option value="180">180 jours</option>
                 <option value="365">365 jours</option>
               </select>
+            </div>
+          </div>
+
+          {/* Mode d'accès */}
+          <div className="setting-item">
+            <div className="setting-info">
+              <h3>Mode d'accès</h3>
+              <p>Définit comment l'application se connecte au serveur Ryvie</p>
+              {changeStatus.show && (
+                <div className={`status-message ${changeStatus.success ? 'success' : 'error'}`}>
+                  {changeStatus.success 
+                    ? changeStatus.message || "✓ Paramètre modifié avec succès" 
+                    : "✗ Erreur lors du changement de paramètre"}
+                </div>
+              )}
+            </div>
+            <div className="setting-control">
+              <div className="toggle-buttons">
+                <button 
+                  className={`toggle-button ${accessMode === 'private' ? 'active' : ''}`}
+                  onClick={() => handleAccessModeChange('private')}
+                >
+                  Privé (Local)
+                </button>
+                <button 
+                  className={`toggle-button ${accessMode === 'public' ? 'active' : ''}`}
+                  onClick={() => handleAccessModeChange('public')}
+                >
+                  Public (Internet)
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -5,6 +5,10 @@ import Home from './Home';
 import User from './User';
 import Settings from './Settings';
 import Welcome from './welcome'; // Import du composant Welcome
+import Login from './connexion'; // Import du composant Login
+
+// Définir Jules comme utilisateur par défaut au démarrage de l'application
+localStorage.setItem('currentUser', 'Jules');
 
 const App = () => (
   <Router>
@@ -13,6 +17,8 @@ const App = () => (
       <Route path="/home" element={<Home />} />
       <Route path="/user" element={<User />} />
       <Route path="/settings" element={<Settings />} />
+      <Route path="/login" element={<Login />} />
+
     </Routes>
   </Router>
 );

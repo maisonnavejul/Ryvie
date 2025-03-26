@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './styles/User.css';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+const { getServerUrl } = require('./config/urls');
 
 const User = () => {
   const navigate = useNavigate();
@@ -14,12 +15,65 @@ const User = () => {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [loading, setLoading] = useState(true); // Indicateur de chargement
   const [error, setError] = useState(null); // Gestion des erreurs
+  const [accessMode, setAccessMode] = useState('private');
+  
+  // Références pour les animations
+  const topBarRef = useRef(null);
+  const userListRef = useRef(null);
+  const userFormRef = useRef(null);
+  
+  // Animation d'entrée
+  useEffect(() => {
+    // Effet d'animation séquentiel
+    const topBarElement = topBarRef.current;
+    const userListElement = userListRef.current;
+    
+    if (topBarElement) {
+      topBarElement.style.opacity = '0';
+      topBarElement.style.transform = 'translateY(-20px)';
+      
+      setTimeout(() => {
+        topBarElement.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+        topBarElement.style.opacity = '1';
+        topBarElement.style.transform = 'translateY(0)';
+      }, 100);
+    }
+    
+    if (userListElement) {
+      userListElement.style.opacity = '0';
+      
+      setTimeout(() => {
+        userListElement.style.transition = 'opacity 0.8s ease';
+        userListElement.style.opacity = '1';
+      }, 400);
+    }
+    
+    // Effet d'animation pour le formulaire quand il s'ouvre
+    if (formOpen && userFormRef.current) {
+      userFormRef.current.style.opacity = '0';
+      userFormRef.current.style.transform = 'translateY(20px)';
+      
+      setTimeout(() => {
+        userFormRef.current.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+        userFormRef.current.style.opacity = '1';
+        userFormRef.current.style.transform = 'translateY(0)';
+      }, 100);
+    }
+  }, [formOpen]);
 
   // Récupération des utilisateurs depuis l'API
   useEffect(() => {
+    // Récupérer le mode d'accès depuis le localStorage
+    const storedMode = localStorage.getItem('accessMode') || 'private';
+    setAccessMode(storedMode);
+    
     const fetchUsers = async () => {
       try {
-        const response = await axios.get('http://ryvie.local:3001/api/users'); // URL de l'API backend
+        // Utiliser l'URL du serveur en fonction du mode d'accès
+        const serverUrl = getServerUrl(storedMode);
+        console.log("Connexion à :", serverUrl);
+        
+        const response = await axios.get(`${serverUrl}/api/users`); // URL de l'API backend
         const ldapUsers = response.data.map((user, index) => ({
           id: index + 1,
           name: user.name || user.uid,
@@ -29,6 +83,7 @@ const User = () => {
         setUsers(ldapUsers);
         setLoading(false);
       } catch (err) {
+        console.error('Erreur lors du chargement des utilisateurs:', err);
         setError('Erreur lors du chargement des utilisateurs');
         setLoading(false);
       }
@@ -74,7 +129,7 @@ const User = () => {
     <div className="user-body">
       <div className="user-container">
         {/* Barre supérieure */}
-        <div className="top-bar">
+        <div ref={topBarRef} className="top-bar">
           <div className="back-btn-container">
             <button className="back-btn" onClick={() => navigate('/home')}>
               ← Retour au Home
@@ -91,7 +146,7 @@ const User = () => {
 
         {/* Formulaire d'ajout/modification d'utilisateur */}
         {formOpen && (
-          <div className="modal-overlay" onClick={() => setFormOpen(false)}>
+          <div ref={userFormRef} className="modal-overlay" onClick={() => setFormOpen(false)}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <h2>{editUser ? 'Modifier un utilisateur' : 'Ajouter un utilisateur'}</h2>
@@ -148,7 +203,7 @@ const User = () => {
         )}
 
         {/* Tableau des utilisateurs */}
-        <div className="table-container">
+        <div ref={userListRef} className="table-container">
           <table className="user-table">
             <thead>
               <tr>
