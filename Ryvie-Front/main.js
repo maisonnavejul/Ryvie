@@ -64,6 +64,12 @@ ipcMain.on('file-received', (event) => {
 });
 
 function createWindowForUser(userId, accessMode, userRole) {
+  console.log("=== INFORMATIONS UTILISATEUR CONNECTÉ ===");
+  console.log("Utilisateur connecté:", userId);
+  console.log("Rôle de l'utilisateur:", userRole);
+  console.log("Mode d'accès:", accessMode);
+  console.log("========================================");
+
   const userSession = session.fromPartition(`persist:${userId}-${accessMode}-${userRole}`);
   console.log(`Création de la fenêtre pour l'utilisateur: ${userId} avec le mode ${accessMode} et le rôle ${userRole}`);
 
@@ -133,6 +139,14 @@ function createWindowForUser(userId, accessMode, userRole) {
   // Pass the user ID to the renderer process once the window is loaded
   window.webContents.on('did-finish-load', () => {
     window.webContents.send('set-current-user', userId);
+    window.webContents.send('set-user-role', userRole);
+    
+    // Stocker les informations dans localStorage via le processus de rendu
+    window.webContents.executeJavaScript(`
+      localStorage.setItem('currentUser', '${userId}');
+      localStorage.setItem('currentUserRole', '${userRole}');
+      console.log('Informations utilisateur stockées dans localStorage:', '${userId}', '${userRole}');
+    `);
   });
 
   userWindows.set(`${userId}-${accessMode}-${userRole}`, window);
@@ -205,10 +219,6 @@ ipcMain.handle('update-session-partition', async (event, userId, accessMode, use
     console.error('Fenêtre expéditrice non trouvée');
     return false;
   }
-  
-  // Update the session partition for the current window
-  // Note: We can't actually change the partition of an existing window,
-  // but we can update our internal mapping to ensure future operations use the correct partition
   
   // Remove the old mapping (if any)
   for (const [key, window] of userWindows.entries()) {

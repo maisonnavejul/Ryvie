@@ -142,7 +142,7 @@ const Welcome = () => {
     // Update the session partition without creating a new window
     if (window.electronAPI && currentUser) {
       // Récupérer le rôle de l'utilisateur depuis localStorage
-      const userRole = localStorage.getItem('currentUserRole') || 'User';
+      const userRole = localStorage.getItem('currentUserRole') ;
       
       // Get the current session's cookies and update the partition
       window.electronAPI.invoke('update-session-partition', currentUser, 'private', userRole)
@@ -167,7 +167,7 @@ const Welcome = () => {
     // Update the session partition without creating a new window
     if (window.electronAPI && currentUser) {
       // Récupérer le rôle de l'utilisateur depuis localStorage
-      const userRole = localStorage.getItem('currentUserRole') || 'User';
+      const userRole = localStorage.getItem('currentUserRole');
       
       // Get the current session's cookies and update the partition
       window.electronAPI.invoke('update-session-partition', currentUser, 'public', userRole)
