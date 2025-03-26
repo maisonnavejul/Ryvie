@@ -17,6 +17,8 @@ const UserLogin = () => {
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [authenticating, setAuthenticating] = useState(false);
   const [loginAttempts, setLoginAttempts] = useState(0);
+  const currentUser = localStorage.getItem('currentUser');
+  const currentUserRole = localStorage.getItem('currentUserRole');
 
   useEffect(() => {
     // Récupérer le mode d'accès depuis le localStorage
@@ -117,7 +119,8 @@ const UserLogin = () => {
       console.log(`Ouverture de session pour: ${userName}`);
       
       // Stocker le nom de l'utilisateur dans localStorage
-      localStorage.setItem('currentUser', userName);
+      localStorage.setItem('currentUser', userId);
+      
       
       // Récupérer le mode d'accès actuel (privé ou public)
       const accessMode = localStorage.getItem('accessMode') || 'private';
@@ -175,7 +178,7 @@ const UserLogin = () => {
             <button
               key={user.id}
               onClick={() => selectUser(user.id, user.name)}
-              className={`user-button ${user.id === 'jules' ? 'primary-user-button' : ''}`}
+              className={`user-button ${user.name === currentUser ? 'primary-user-button' : ''}`}
             >
               <div className="user-avatar">
                 {user.name.charAt(0).toUpperCase()}
