@@ -290,6 +290,311 @@ app.post('/api/authenticate', (req, res) => {
     });
   });
 });
+app.post('/api/add-user', async (req, res) => {
+  const { adminUid, adminPassword, newUser } = req.body;
+
+  if (!adminUid || !adminPassword || !newUser || !newUser.role) {
+    return res.status(400).json({ error: 'Champs requis manquants (adminUid, adminPassword, newUser, role)' });
+  }
+
+  const ldapClient = ldap.createClient({ url: ldapConfig.url });
+
+  // Étape 1 : Connexion initiale en read-only
+  ldapClient.bind(ldapConfig.bindDN, ldapConfig.bindPassword, (err) => {
+    if (err) {
+      console.error('Erreur connexion LDAP initiale :', err);
+      return res.status(500).json({ error: 'Erreur de connexion LDAP initiale' });
+    }
+
+    // Étape 2 : Chercher DN de l’admin
+    const adminFilter = `(&(uid=${adminUid})${ldapConfig.userFilter})`;
+    ldapClient.search(ldapConfig.userSearchBase, {
+      filter: adminFilter,
+      scope: 'sub',
+      attributes: ['dn'],
+    }, (err, ldapRes) => {
+      if (err) {
+        console.error('Erreur recherche admin LDAP :', err);
+        return res.status(500).json({ error: 'Erreur recherche admin LDAP' });
+      }
+
+      let adminEntry;
+      ldapRes.on('searchEntry', (entry) => { adminEntry = entry; });
+
+      ldapRes.on('end', () => {
+        if (!adminEntry) {
+          ldapClient.unbind();
+          return res.status(401).json({ error: 'Admin non trouvé' });
+        }
+
+        const adminDN = adminEntry.pojo.objectName;
+        const adminAuthClient = ldap.createClient({ url: ldapConfig.url });
+
+        // Étape 3 : Authentifier l’admin
+        adminAuthClient.bind(adminDN, adminPassword, (err) => {
+          if (err) {
+            console.error('Échec authentification admin:', err);
+            ldapClient.unbind();
+            return res.status(401).json({ error: 'Authentification Admin échouée' });
+          }
+
+          // Étape 4 : Vérifier si l’admin est bien dans le groupe admins
+          ldapClient.search(ldapConfig.adminGroup, {
+            filter: `(member=${adminDN})`,
+            scope: 'base',
+            attributes: ['cn'],
+          }, (err, roleRes) => {
+            let isAdmin = false;
+            roleRes.on('searchEntry', () => { isAdmin = true; });
+
+            roleRes.on('end', () => {
+              if (!isAdmin) {
+                ldapClient.unbind();
+                adminAuthClient.unbind();
+                return res.status(403).json({ error: 'Droits admin requis' });
+              }
+
+              // Étape 5 : Vérifier UID ou email déjà utilisé
+              const checkFilter = `(|(uid=${newUser.uid})(mail=${newUser.mail}))`;
+              ldapClient.search(ldapConfig.userSearchBase, {
+                filter: checkFilter,
+                scope: 'sub',
+                attributes: ['uid', 'mail'],
+              }, (err, checkRes) => {
+                if (err) {
+                  console.error('Erreur vérification UID/email existants :', err);
+                  return res.status(500).json({ error: 'Erreur lors de la vérification de l’utilisateur' });
+                }
+
+                let conflict = null;
+                checkRes.on('searchEntry', (entry) => {
+                  const entryUid = entry.pojo.attributes.find(attr => attr.type === 'uid')?.values[0];
+                  const entryMail = entry.pojo.attributes.find(attr => attr.type === 'mail')?.values[0];
+                  if (entryUid === newUser.uid) conflict = 'UID';
+                  else if (entryMail === newUser.mail) conflict = 'email';
+                });
+
+                checkRes.on('end', () => {
+                  if (conflict) {
+                    ldapClient.unbind();
+                    adminAuthClient.unbind();
+                    return res.status(409).json({ error: `Un utilisateur avec ce ${conflict} existe déjà.` });
+                  }
+
+                  // Étape 6 : Créer l'utilisateur
+                  const newUserDN = `uid=${newUser.uid},${ldapConfig.userSearchBase}`;
+                  const entry = {
+                    cn: newUser.cn,
+                    sn: newUser.sn,
+                    uid: newUser.uid,
+                    mail: newUser.mail,
+                    objectClass: ['top', 'person', 'organizationalPerson', 'inetOrgPerson'],
+                    userPassword: newUser.password,
+                  };
+
+                  adminAuthClient.add(newUserDN, entry, (err) => {
+                    if (err) {
+                      console.error('Erreur ajout utilisateur LDAP :', err);
+                      ldapClient.unbind();
+                      adminAuthClient.unbind();
+                      return res.status(500).json({ error: 'Erreur ajout utilisateur LDAP' });
+                    }
+
+                    // Étape 7 : Ajouter dans le bon groupe
+                    const roleGroup = {
+                      Admin: ldapConfig.adminGroup,
+                      User: ldapConfig.userGroup,
+                      Guest: ldapConfig.guestGroup,
+                    }[newUser.role];
+
+                    if (!roleGroup) {
+                      return res.status(400).json({ error: `Rôle inconnu : ${newUser.role}` });
+                    }
+
+                    const groupClient = ldap.createClient({ url: ldapConfig.url });
+                    groupClient.bind(adminDN, adminPassword, (err) => {
+                      if (err) {
+                        console.error('Échec bind admin pour ajout au groupe');
+                        return res.status(500).json({ error: 'Impossible d’ajouter au groupe' });
+                      }
+
+                      const change = new ldap.Change({
+                        operation: 'add',
+                        modification: new ldap.Attribute({
+                          type: 'member',
+                          values: [newUserDN],
+                        }),
+                      });
+
+                      groupClient.modify(roleGroup, change, (err) => {
+                        ldapClient.unbind();
+                        adminAuthClient.unbind();
+                        groupClient.unbind();
+
+                        if (err && err.name !== 'AttributeOrValueExistsError') {
+                          console.error('Erreur ajout au groupe :', err);
+                          return res.status(500).json({ error: 'Utilisateur créé, mais échec d’ajout au groupe' });
+                        }
+
+                        return res.json({
+                          message: `Utilisateur "${newUser.uid}" ajouté avec succès en tant que ${newUser.role}`,
+                          user: {
+                            cn: newUser.cn,
+                            sn: newUser.sn,
+                            uid: newUser.uid,
+                            mail: newUser.mail,
+                            role: newUser.role,
+                          }
+                        });
+                      });
+                    });
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+app.post('/api/delete-user', async (req, res) => {
+  const { adminUid, adminPassword, uid } = req.body;
+
+  if (!adminUid || !adminPassword || !uid) {
+    return res.status(400).json({ error: 'adminUid, adminPassword et uid requis' });
+  }
+
+  const ldapClient = ldap.createClient({ url: ldapConfig.url });
+
+  ldapClient.bind(ldapConfig.bindDN, ldapConfig.bindPassword, (err) => {
+    if (err) {
+      console.error('Erreur bind initial LDAP :', err);
+      return res.status(500).json({ error: 'Connexion LDAP échouée' });
+    }
+
+    const adminFilter = `(&(uid=${adminUid})${ldapConfig.userFilter})`;
+
+    ldapClient.search(ldapConfig.userSearchBase, {
+      filter: adminFilter,
+      scope: 'sub',
+      attributes: ['dn'],
+    }, (err, adminRes) => {
+      if (err) {
+        console.error('Erreur recherche admin :', err);
+        return res.status(500).json({ error: 'Erreur recherche admin' });
+      }
+
+      let adminEntry;
+      adminRes.on('searchEntry', entry => adminEntry = entry);
+
+      adminRes.on('end', () => {
+        if (!adminEntry) {
+          ldapClient.unbind();
+          return res.status(401).json({ error: 'Admin non trouvé' });
+        }
+
+        const adminDN = adminEntry.pojo.objectName;
+        const adminAuthClient = ldap.createClient({ url: ldapConfig.url });
+
+        adminAuthClient.bind(adminDN, adminPassword, (err) => {
+          if (err) {
+            console.error('Échec authentification admin :', err);
+            ldapClient.unbind();
+            return res.status(401).json({ error: 'Mot de passe admin incorrect' });
+          }
+
+          // Vérifie si l'admin est bien dans le groupe "admins"
+          ldapClient.search(ldapConfig.adminGroup, {
+            filter: `(member=${adminDN})`,
+            scope: 'base',
+            attributes: ['cn'],
+          }, (err, groupRes) => {
+            let isAdmin = false;
+            groupRes.on('searchEntry', () => isAdmin = true);
+
+            groupRes.on('end', () => {
+              if (!isAdmin) {
+                ldapClient.unbind();
+                adminAuthClient.unbind();
+                return res.status(403).json({ error: 'Accès refusé. Droits admin requis.' });
+              }
+
+              // Trouver l'utilisateur à supprimer
+              ldapClient.search(ldapConfig.userSearchBase, {
+                filter: `(uid=${uid})`,
+                scope: 'sub',
+                attributes: ['dn'],
+              }, (err, userRes) => {
+                if (err) {
+                  console.error('Erreur recherche utilisateur à supprimer :', err);
+                  return res.status(500).json({ error: 'Erreur recherche utilisateur' });
+                }
+
+                let userEntry;
+                userRes.on('searchEntry', entry => userEntry = entry);
+
+                userRes.on('end', () => {
+                  if (!userEntry) {
+                    ldapClient.unbind();
+                    adminAuthClient.unbind();
+                    return res.status(404).json({ error: 'Utilisateur non trouvé' });
+                  }
+
+                  const userDN = userEntry.pojo.objectName;
+
+                  // Étape 1 : Supprimer des groupes
+                  const removeFromGroups = [ldapConfig.adminGroup, ldapConfig.userGroup, ldapConfig.guestGroup];
+
+                  const groupClient = ldap.createClient({ url: ldapConfig.url });
+                  groupClient.bind(adminDN, adminPassword, (err) => {
+                    if (err) {
+                      console.error('Erreur bind pour nettoyage groupes');
+                      return res.status(500).json({ error: 'Erreur de nettoyage groupes' });
+                    }
+
+                    let tasksDone = 0;
+                    removeFromGroups.forEach(groupDN => {
+                      const change = new ldap.Change({
+                        operation: 'delete',
+                        modification: new ldap.Attribute({
+                          type: 'member',
+                          values: [userDN],
+                        }),
+                      });
+
+                      groupClient.modify(groupDN, change, (err) => {
+                        // Silencieusement ignore si l'utilisateur n'était pas dans le groupe
+                        tasksDone++;
+                        if (tasksDone === removeFromGroups.length) {
+                          // Étape 2 : Supprimer l'utilisateur
+                          adminAuthClient.del(userDN, (err) => {
+                            ldapClient.unbind();
+                            adminAuthClient.unbind();
+                            groupClient.unbind();
+
+                            if (err) {
+                              console.error('Erreur suppression utilisateur :', err);
+                              return res.status(500).json({ error: 'Erreur suppression utilisateur' });
+                            }
+
+                            res.json({ message: `Utilisateur "${uid}" supprimé avec succès` });
+                          });
+                        }
+                      });
+                    });
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
 // Serveur HTTP pour signaler la détection du serveur
 app.get('/status', (req, res) => {
   res.status(200).json({
