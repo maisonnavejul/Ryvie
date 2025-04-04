@@ -257,7 +257,8 @@ function startUdpBackend() {
   const udpServerPath = path.join(__dirname, 'udpServer.js');
   
   // Récupérer le mode d'accès depuis le localStorage
-  const accessMode = global.accessMode || 'private';
+  //const accessMode = global.accessMode || 'private';
+  const accessMode = 'private';
   console.log(`Démarrage du processus UDP avec le mode d'accès: ${accessMode}`);
   
   // Passer le mode d'accès comme argument au processus
@@ -327,14 +328,43 @@ ipcMain.on('update-access-mode', (event, mode) => {
 // Initialize the default user with role from LDAP
 async function initializeDefaultUser() {
   try {
-    // Default user ID
-    const defaultUserId = 'jules';
+ // Default user ID
+ const defaultUserId = 'jules';
     
-    // Try to fetch users to get the role for the default user
+ // Tester d'abord la connexion en mode privé, puis basculer en public si nécessaire
+ let accessMode = 'private'; // Mode par défaut initial
+ 
+ // Fonction pour tester la connexion à un serveur
+ async function testConnection(url) {
+   try {
+     console.log(`Test de connexion à ${url}...`);
+     const response = await axios.get(`${url}/api/ping`, { timeout: 3000 });
+     return response.status === 200;
+   } catch (error) {
+     console.log(`Connexion à ${url} échouée: ${error.message}`);
+     return false;
+   }
+ }
+ 
+ // Tester la connexion au serveur privé (ryvie.local)
+ const privateServerUrl = getServerUrl('private');
+ const isPrivateServerReachable = await testConnection(privateServerUrl);
+ 
+ if (isPrivateServerReachable) {
+   console.log('Serveur privé (ryvie.local) accessible, utilisation du mode privé');
+   accessMode = 'private';
+ } else {
+   console.log('Serveur privé (ryvie.local) inaccessible, basculement en mode public');
+   accessMode = 'public';
+ }
+ 
+ console.log(`Mode d'accès déterminé: ${accessMode}`);
     try {
-      const users = await fetchUsers('private');
+      //console.log('Fetched users for initialization:', users.length);
+      const users = await fetchUsers(accessMode);
+      //enregristrer en global
+      global.accessMode = accessMode;
       console.log('Fetched users for initialization:', users.length);
-      
       // Look for jules in the users
       const defaultUser = users.find(user => 
         user.id === defaultUserId || 
@@ -346,10 +376,11 @@ async function initializeDefaultUser() {
       if (defaultUser) {
         console.log(`Default user found: ${defaultUser.name} with role ${defaultUser.role}`);
         // Create window for the default user with their role
-        createWindowForUser(defaultUser.id, 'private', defaultUser.role);
+        createWindowForUser(defaultUser.id, accessMode, defaultUser.role);
       } else {
         console.log(`Default user "${defaultUserId}" not found in LDAP, using as is`);
         //createWindowForUser(defaultUserId);
+        //createWindowForUser(defaultUserId, 'public', 'Admin');
       }
     } catch (error) {
       console.error('Error fetching users for initialization:', error);
@@ -361,7 +392,6 @@ async function initializeDefaultUser() {
   } catch (error) {
     console.error('Error initializing default user:', error);
     // Fallback to just using 'jules' without role information
-    //createWindowForUser('jules');
     startUdpBackend();
   }
 }
