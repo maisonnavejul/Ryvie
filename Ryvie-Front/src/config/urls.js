@@ -27,8 +27,8 @@ const BASE_URLS = {
       PRIVATE: 'http://ryvie.local:9005'
     },
     OUTLINE: {
-      PUBLIC: 'https://192.168.1.34:8443/',
-      PRIVATE: 'https://192.168.1.34:8443/'
+      PUBLIC: 'http://192.168.6.131/#/',
+      PRIVATE: 'http://192.168.6.131/#/'
     },
     RTRANSFER: {
       PUBLIC: 'http://rtransfer.test.jules.ryvie.fr/auth/signIn',

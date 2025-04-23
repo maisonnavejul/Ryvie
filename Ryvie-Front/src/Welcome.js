@@ -99,21 +99,6 @@ const Welcome = () => {
       setLoading(false);
     }
 
-    // Add a delay to the server detection to make it more visible
-    const checkServer = async () => {
-      try {
-        const response = await axios.get('http://ryvie.local:3002/api/server-status');
-        if (response.data.status === 'online') {
-          // Add a deliberate delay to show the loading animation
-          setTimeout(() => {
-            setServerIP('ryvie.local');
-            setLoading(false);
-          }, 2000); // 2-second delay to make the server detection more visible
-        }
-      } catch (error) {
-        console.error('Erreur lors de la vérification du serveur:', error);
-      }
-    };
 
     // Optimize initial loading
     const preloadAssets = () => {

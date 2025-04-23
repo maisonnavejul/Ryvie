@@ -338,7 +338,7 @@ async function initializeDefaultUser() {
  async function testConnection(url) {
    try {
      console.log(`Test de connexion à ${url}...`);
-     const response = await axios.get(`${url}/api/ping`, { timeout: 3000 });
+     const response = await axios.get(`${url}/status`, { timeout: 3000 });
      return response.status === 200;
    } catch (error) {
      console.log(`Connexion à ${url} échouée: ${error.message}`);
