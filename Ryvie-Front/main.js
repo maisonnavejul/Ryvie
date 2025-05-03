@@ -26,10 +26,18 @@ const userSessions = new Map();
 
 // Configuration du dossier de téléchargement par défaut
 app.on('ready', () => {
-  downloadPath = path.join(app.getPath('downloads'), 'Ryvie-rDrop');
-  if (!fs.existsSync(downloadPath)) {
-    fs.mkdirSync(downloadPath, { recursive: true });
+  let basePath = path.join(app.getPath('downloads'), 'Ryvie-rDrop');
+  let counter = 1;
+  let newPath = basePath;
+
+  // Tant que le dossier existe, incrémenter le compteur
+  while (fs.existsSync(newPath)) {
+    newPath = `${basePath}-${counter}`;
+    counter++;
   }
+
+  downloadPath = newPath;
+  fs.mkdirSync(downloadPath, { recursive: true });
   app.setPath('downloads', downloadPath);
 });
 
