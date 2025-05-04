@@ -7,6 +7,8 @@ const Docker = require('dockerode');
 const diskusage = require('diskusage');
 const path = require('path');
 const ldap = require('ldapjs');
+const si = require('systeminformation');
+const osutils = require('os-utils');
 
 const docker = new Docker();
 const app = express();
@@ -22,13 +24,39 @@ app.use(cors());
 
 // Correspondances des noms de conteneurs Docker avec des noms personnalisés
 const containerMapping = {
-  'nextcloud': 'Cloud',
+  'rcloud': 'Cloud',
   'portainer': 'Portainer',
+  'rtransfer': 'rTransfer',
+  'rdrop': 'rDrop',
+  'rpictures': 'rPictures',
 };
 
-// Liste des conteneurs actifs
-let activeContainers = [];
-let isServerDetected = false;
+// Fonction pour extraire le nom de l'application à partir du nom du conteneur
+function extractAppName(containerName) {
+  // Vérifier si le conteneur commence par 'app-'
+  if (containerName.startsWith('app-')) {
+    // Extraire la partie après 'app-'
+    const appNameWithSuffix = containerName.substring(4);
+    // Extraire la partie avant le prochain tiret ou prendre tout si pas de tiret
+    const dashIndex = appNameWithSuffix.indexOf('-');
+    if (dashIndex > 0) {
+      return appNameWithSuffix.substring(0, dashIndex);
+    }
+    return appNameWithSuffix;
+  }
+  // Pour les conteneurs qui ne commencent pas par 'app-', retourner null
+  return null;
+}
+
+// Fonction pour récupérer tous les conteneurs Docker (actifs et inactifs)
+async function getAllContainers() {
+  return new Promise((resolve, reject) => {
+    docker.listContainers({ all: true }, (err, containers) => {
+      if (err) return reject(err);
+      resolve(containers);
+    });
+  });
+}
 
 // Fonction pour récupérer les conteneurs Docker actifs
 async function initializeActiveContainers() {
@@ -37,46 +65,216 @@ async function initializeActiveContainers() {
       if (err) return reject(err);
 
       const containerNames = containers.map((container) => {
-        const containerName = container.Names[0].replace('/', '');
-        for (const key in containerMapping) {
-          if (containerName.toLowerCase().includes(key)) {
-            return containerMapping[key];
-          }
-        }
-        return containerName;
+        return container.Names[0].replace('/', '');
       });
 
+      console.log('Liste initialisée des conteneurs actifs :', containerNames);
       resolve(containerNames);
     });
   });
 }
-const osutils = require('os-utils');
 
-async function getServerInfo() {
-  const totalRam = os.totalmem();
-  const freeRam = os.freemem();
-  const ramUsagePercentage = (((totalRam - freeRam) / totalRam) * 100).toFixed(1);
-
-  const diskInfo = diskusage.checkSync(path.parse(__dirname).root);
-  const totalDiskGB = (diskInfo.total / 1e9).toFixed(1);
-  const usedDiskGB = ((diskInfo.total - diskInfo.free) / 1e9).toFixed(1);
-
-  const cpuUsagePercentage = await new Promise((resolve) => {
-    osutils.cpuUsage((usage) => {
-      resolve((usage * 100).toFixed(1));
+// Fonction pour regrouper les conteneurs par application
+async function getAppStatus() {
+  try {
+    const containers = await getAllContainers();
+    const apps = {};
+    
+    // Regrouper les conteneurs par application
+    containers.forEach(container => {
+      const containerName = container.Names[0].replace('/', '');
+      const appName = extractAppName(containerName);
+      
+      // Si ce n'est pas un conteneur d'application, ignorer
+      if (!appName) return;
+      
+      // Créer l'entrée de l'application si elle n'existe pas
+      if (!apps[appName]) {
+        // Utiliser le nom personnalisé s'il existe, sinon utiliser le nom extrait
+        const displayName = containerMapping[appName] || appName;
+        apps[appName] = {
+          id: `app-${appName}`,
+          name: displayName,
+          containers: [],
+          running: false,
+          total: 0,
+          active: 0,
+          ports: []
+        };
+      }
+      
+      // Ajouter le conteneur à l'application
+      apps[appName].total++;
+      if (container.State === 'running') {
+        apps[appName].active++;
+        
+        // Collecter les ports exposés
+        if (container.Ports && container.Ports.length > 0) {
+          container.Ports.forEach(port => {
+            if (port.PublicPort && !apps[appName].ports.includes(port.PublicPort)) {
+              apps[appName].ports.push(port.PublicPort);
+            }
+          });
+        }
+      }
+      
+      apps[appName].containers.push({
+        id: container.Id,
+        name: containerName,
+        state: container.State,
+        status: container.Status
+      });
     });
-  });
+    
+    // Déterminer si l'application est considérée comme "running"
+    // Une application est "running" seulement si TOUS ses conteneurs sont actifs
+    for (const appName in apps) {
+      const app = apps[appName];
+      app.running = app.total > 0 && app.active === app.total;
+    }
+    
+    // Formater la sortie finale
+    return Object.values(apps).map(app => ({
+      id: app.id,
+      name: app.name,
+      status: app.running ? 'running' : 'stopped',
+      progress: app.total > 0 ? Math.round((app.active / app.total) * 100) : 0,
+      containersRunning: `${app.active}/${app.total}`,
+      ports: app.ports.sort((a, b) => a - b), // Trier les ports
+      containers: app.containers
+    }));
+  } catch (error) {
+    console.error('Erreur lors de la récupération du statut des applications:', error);
+    throw error;
+  }
+}
 
-  return {
-    stockage: {
-      utilise: `${usedDiskGB} GB`,
-      total: `${totalDiskGB} GB`,
-    },
-    performance: {
-      cpu: `${cpuUsagePercentage}%`,
-      ram: `${ramUsagePercentage}%`,
-    },
-  };
+// Fonction pour démarrer une application (tous ses conteneurs)
+async function startApp(appId) {
+  try {
+    const containers = await getAllContainers();
+    let startedCount = 0;
+    let failedCount = 0;
+    
+    // Filtrer les conteneurs appartenant à cette application
+    const appContainers = containers.filter(container => {
+      const containerName = container.Names[0].replace('/', '');
+      return containerName.startsWith(appId);
+    });
+    
+    if (appContainers.length === 0) {
+      throw new Error(`Aucun conteneur trouvé pour l'application ${appId}`);
+    }
+    
+    // Démarrer chaque conteneur arrêté
+    for (const container of appContainers) {
+      if (container.State !== 'running') {
+        try {
+          const containerObj = docker.getContainer(container.Id);
+          await containerObj.start();
+          startedCount++;
+        } catch (err) {
+          console.error(`Erreur lors du démarrage du conteneur ${container.Names[0]}:`, err);
+          failedCount++;
+        }
+      }
+    }
+    
+    return {
+      success: failedCount === 0,
+      message: `${startedCount} conteneur(s) démarré(s), ${failedCount} échec(s)`,
+      appId
+    };
+  } catch (error) {
+    console.error(`Erreur lors du démarrage de l'application ${appId}:`, error);
+    throw error;
+  }
+}
+
+// Fonction pour arrêter une application (tous ses conteneurs)
+async function stopApp(appId) {
+  try {
+    const containers = await getAllContainers();
+    let stoppedCount = 0;
+    let failedCount = 0;
+    
+    // Filtrer les conteneurs appartenant à cette application
+    const appContainers = containers.filter(container => {
+      const containerName = container.Names[0].replace('/', '');
+      return containerName.startsWith(appId);
+    });
+    
+    if (appContainers.length === 0) {
+      throw new Error(`Aucun conteneur trouvé pour l'application ${appId}`);
+    }
+    
+    // Arrêter chaque conteneur en cours d'exécution
+    for (const container of appContainers) {
+      if (container.State === 'running') {
+        try {
+          const containerObj = docker.getContainer(container.Id);
+          await containerObj.stop();
+          stoppedCount++;
+        } catch (err) {
+          console.error(`Erreur lors de l'arrêt du conteneur ${container.Names[0]}:`, err);
+          failedCount++;
+        }
+      }
+    }
+    
+    return {
+      success: failedCount === 0,
+      message: `${stoppedCount} conteneur(s) arrêté(s), ${failedCount} échec(s)`,
+      appId
+    };
+  } catch (error) {
+    console.error(`Erreur lors de l'arrêt de l'application ${appId}:`, error);
+    throw error;
+  }
+}
+
+// Fonction pour redémarrer une application (tous ses conteneurs)
+async function restartApp(appId) {
+  try {
+    const containers = await getAllContainers();
+    let restartedCount = 0;
+    let failedCount = 0;
+    
+    // Filtrer les conteneurs appartenant à cette application
+    const appContainers = containers.filter(container => {
+      const containerName = container.Names[0].replace('/', '');
+      return containerName.startsWith(appId);
+    });
+    
+    if (appContainers.length === 0) {
+      throw new Error(`Aucun conteneur trouvé pour l'application ${appId}`);
+    }
+    
+    // Redémarrer chaque conteneur
+    for (const container of appContainers) {
+      try {
+        const containerObj = docker.getContainer(container.Id);
+        if (container.State === 'running') {
+          await containerObj.restart();
+        } else {
+          await containerObj.start();
+        }
+        restartedCount++;
+      } catch (err) {
+        console.error(`Erreur lors du redémarrage du conteneur ${container.Names[0]}:`, err);
+        failedCount++;
+      }
+    }
+    
+    return {
+      success: failedCount === 0,
+      message: `${restartedCount} conteneur(s) redémarré(s), ${failedCount} échec(s)`,
+      appId
+    };
+  } catch (error) {
+    console.error(`Erreur lors du redémarrage de l'application ${appId}:`, error);
+    throw error;
+  }
 }
 
 // Fonction pour récupérer l'adresse IP locale
@@ -93,28 +291,58 @@ function getLocalIP() {
   return 'IP not found';
 }
 
-// Écouter les événements Docker et mettre à jour la liste des conteneurs
-docker.getEvents((err, stream) => {
-  if (err) {
-    console.error('Erreur lors de l\'écoute des événements Docker', err);
-    return;
-  }
+// Fonction pour récupérer les informations du serveur
+async function getServerInfo() {
+  // 1) Mémoire
+  const totalRam = os.totalmem();
+  const freeRam = os.freemem();
+  const ramUsagePercentage = (((totalRam - freeRam) / totalRam) * 100).toFixed(1);
 
-  stream.on('data', (data) => {
-    const event = JSON.parse(data.toString());
-    if (event.Type === 'container' && (event.Action === 'start' || event.Action === 'stop')) {
-      const containerName = event.Actor.Attributes.name;
-      if (event.Action === 'start') {
-        if (!activeContainers.includes(containerName)) {
-          activeContainers.push(containerName);
-        }
-      } else if (event.Action === 'stop') {
-        activeContainers = activeContainers.filter((name) => name !== containerName);
-      }
-      io.emit('containers', { activeContainers });
-    }
+  // 2) Disques
+  const diskLayout = await si.diskLayout();
+  const fsSizes = await si.fsSize();
+
+  // 3) Compose la réponse disque par disque (sans 'type')
+  const disks = diskLayout.map(d => {
+    const totalBytes = d.size;
+    const parts = fsSizes.filter(f =>
+      f.fs && f.fs.startsWith(d.device)
+    );
+    const mounted = parts.length > 0;
+    const usedBytes = parts.reduce((sum, p) => sum + p.used, 0);
+    const freeBytes = totalBytes - usedBytes;
+
+    return {
+      device: d.device,                         // ex: '/dev/sda'
+      size: `${(totalBytes / 1e9).toFixed(1)} GB`,
+      used: `${(usedBytes / 1e9).toFixed(1)} GB`,
+      free: `${(freeBytes / 1e9).toFixed(1)} GB`,
+      mounted: mounted
+    };
   });
-});
+
+  // 4) Totaux globaux (uniquement pour les disques montés)
+  const mountedDisks = disks.filter(d => d.mounted);
+  const totalSize = mountedDisks.reduce((sum, d) => sum + parseFloat(d.size), 0);
+  const totalUsed = mountedDisks.reduce((sum, d) => sum + parseFloat(d.used), 0);
+  const totalFree = mountedDisks.reduce((sum, d) => sum + parseFloat(d.free), 0);
+  
+  // 5) CPU
+  const cpuUsagePercentage = await new Promise(resolve => {
+    osutils.cpuUsage(u => resolve((u * 100).toFixed(1)));
+  });
+  
+  return {
+    stockage: {
+      utilise: `${totalUsed.toFixed(1)} GB`,
+      total: `${totalSize.toFixed(1)} GB`,
+    },
+    performance: {
+      cpu: `${cpuUsagePercentage}%`,
+      ram: `${ramUsagePercentage}%`,
+    },
+  };
+}
 
 // LDAP Configuration
 const ldapConfig = {
@@ -219,6 +447,7 @@ app.get('/api/users', async (req, res) => {
     );
   });
 });
+
 // Endpoint : Authentification utilisateur LDAP
 app.use(express.json()); // Pour parser le JSON dans les requêtes POST
 
@@ -290,6 +519,7 @@ app.post('/api/authenticate', (req, res) => {
     });
   });
 });
+
 app.post('/api/add-user', async (req, res) => {
   const { adminUid, adminPassword, newUser } = req.body;
 
@@ -319,7 +549,7 @@ app.post('/api/add-user', async (req, res) => {
       }
 
       let adminEntry;
-      ldapRes.on('searchEntry', (entry) => { adminEntry = entry; });
+      ldapRes.on('searchEntry', entry => adminEntry = entry);
 
       ldapRes.on('end', () => {
         if (!adminEntry) {
@@ -345,7 +575,7 @@ app.post('/api/add-user', async (req, res) => {
             attributes: ['cn'],
           }, (err, roleRes) => {
             let isAdmin = false;
-            roleRes.on('searchEntry', () => { isAdmin = true; });
+            roleRes.on('searchEntry', () => isAdmin = true);
 
             roleRes.on('end', () => {
               if (!isAdmin) {
@@ -599,19 +829,137 @@ app.post('/api/delete-user', async (req, res) => {
 app.get('/status', (req, res) => {
   res.status(200).json({
     message: 'Server is running',
-    serverDetected: isServerDetected,
+    serverDetected: false,
     ip: getLocalIP(),
   });
 });
+
 app.get('/api/server-info', async (req, res) => {
   try {
     const serverInfo = await getServerInfo();
     res.json(serverInfo);
   } catch (error) {
-    console.error('Erreur lors de la récupération des infos serveur :', error);
-    res.status(500).json({ error: "Impossible de récupérer les infos serveur" });
+    console.error('Erreur lors de la récupération des informations du serveur :', error);
+    res.status(500).json({ error: 'Erreur serveur lors de la récupération des informations' });
   }
 });
+
+app.get('/api/disks', async (req, res) => {
+  try {
+    // 1) Liste des disques physiques
+    const diskLayout = await si.diskLayout();
+    // 2) Liste des volumes montés
+    const fsSizes    = await si.fsSize();
+
+    // 3) Compose la réponse disque par disque
+    const disks = diskLayout.map(d => {
+      const totalBytes = d.size;
+      const parts      = fsSizes.filter(f =>
+        f.fs && f.fs.startsWith(d.device)
+      );
+      const mounted    = parts.length > 0;
+
+      // Si monté, on calcule used/free ; sinon, on force à 0
+      let usedBytes, freeBytes;
+      if (mounted) {
+        usedBytes = parts.reduce((sum, p) => sum + p.used, 0);
+        freeBytes = totalBytes - usedBytes;
+      } else {
+        usedBytes = 0;
+        freeBytes = 0;
+      }
+
+      return {
+        device:  d.device,                         // ex: '/dev/sda'
+        size:    `${(totalBytes / 1e9).toFixed(1)} GB`,
+        used:    `${(usedBytes   / 1e9).toFixed(1)} GB`,
+        free:    `${(freeBytes   / 1e9).toFixed(1)} GB`,
+        mounted: mounted
+      };
+    });
+
+    // 4) Totaux globaux (uniquement pour les disques montés)
+    const mountedDisks = disks.filter(d => d.mounted);
+    const totalSize = mountedDisks.reduce((sum, d) => sum + parseFloat(d.size), 0);
+    const totalUsed = mountedDisks.reduce((sum, d) => sum + parseFloat(d.used), 0);
+    const totalFree = mountedDisks.reduce((sum, d) => sum + parseFloat(d.free), 0);
+
+    res.json({
+      disks,
+      total: {
+        size: `${totalSize.toFixed(1)} GB`,
+        used: `${totalUsed.toFixed(1)} GB`,
+        free: `${totalFree.toFixed(1)} GB`
+      }
+    });
+  } catch (err) {
+    console.error('Erreur récupération info disques :', err);
+    res.status(500).json({ error: 'Impossible de récupérer les informations de disques' });
+  }
+});
+
+// Endpoint : Récupérer la liste des applications et leur statut
+app.get('/api/apps', async (req, res) => {
+  try {
+    const apps = await getAppStatus();
+    res.status(200).json(apps);
+  } catch (error) {
+    console.error('Erreur lors de la récupération des applications :', error);
+    res.status(500).json({ error: 'Erreur serveur lors de la récupération des applications' });
+  }
+});
+
+// Endpoint : Démarrer une application
+app.post('/api/apps/:id/start', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const result = await startApp(id);
+    res.status(200).json(result);
+  } catch (error) {
+    console.error(`Erreur lors du démarrage de l'application ${id} :`, error);
+    res.status(500).json({ 
+      error: `Erreur serveur lors du démarrage de l'application`,
+      message: error.message
+    });
+  }
+});
+
+// Endpoint : Arrêter une application
+app.post('/api/apps/:id/stop', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const result = await stopApp(id);
+    res.status(200).json(result);
+  } catch (error) {
+    console.error(`Erreur lors de l'arrêt de l'application ${id} :`, error);
+    res.status(500).json({ 
+      error: `Erreur serveur lors de l'arrêt de l'application`,
+      message: error.message
+    });
+  }
+});
+
+// Endpoint : Redémarrer une application
+app.post('/api/apps/:id/restart', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const result = await restartApp(id);
+    res.status(200).json(result);
+  } catch (error) {
+    console.error(`Erreur lors du redémarrage de l'application ${id} :`, error);
+    res.status(500).json({ 
+      error: `Erreur serveur lors du redémarrage de l'application`,
+      message: error.message
+    });
+  }
+});
+
+// Liste des conteneurs actifs
+let activeContainers = [];
+let isServerDetected = false;
 
 io.on('connection', async (socket) => {
   console.log('Un client est connecté');
@@ -620,12 +968,42 @@ io.on('connection', async (socket) => {
   socket.emit('containers', { activeContainers });
 
   socket.on('discover', () => {
-    isServerDetected = true;
     io.emit('server-detected', { message: 'Ryvie server found!', ip: getLocalIP() });
   });
 
   socket.on('disconnect', () => {
     console.log('Client déconnecté');
+  });
+});
+
+// Écouter les événements Docker et mettre à jour la liste des conteneurs
+docker.getEvents((err, stream) => {
+  if (err) {
+    console.error('Erreur lors de l\'écoute des événements Docker', err);
+    return;
+  }
+
+  stream.on('data', (data) => {
+    const event = JSON.parse(data.toString());
+    if (event.Type === 'container' && (event.Action === 'start' || event.Action === 'stop')) {
+      const containerName = event.Actor.Attributes.name;
+      if (event.Action === 'start') {
+        if (!activeContainers.includes(containerName)) {
+          activeContainers.push(containerName);
+        }
+      } else if (event.Action === 'stop') {
+        activeContainers = activeContainers.filter((name) => name !== containerName);
+      }
+      io.emit('containers', { activeContainers });
+      
+      // Émettre l'événement de mise à jour des applications
+      // Cela permet au frontend de mettre à jour l'état des applications en temps réel
+      getAppStatus().then(apps => {
+        io.emit('apps-status-update', apps);
+      }).catch(error => {
+        console.error('Erreur lors de la mise à jour des statuts d\'applications:', error);
+      });
+    }
   });
 });
 
