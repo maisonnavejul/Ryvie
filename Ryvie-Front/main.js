@@ -26,18 +26,12 @@ const userSessions = new Map();
 
 // Configuration du dossier de téléchargement par défaut
 app.on('ready', () => {
-  let basePath = path.join(app.getPath('downloads'), 'Ryvie-rDrop');
-  let counter = 1;
-  let newPath = basePath;
-
-  // Tant que le dossier existe, incrémenter le compteur
-  while (fs.existsSync(newPath)) {
-    newPath = `${basePath}-${counter}`;
-    counter++;
-  }
-
-  downloadPath = newPath;
-  fs.mkdirSync(downloadPath, { recursive: true });
+  // Obtenir la date du jour formatée
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  
+  // Définir le chemin sans créer le dossier immédiatement
+  downloadPath = path.join(app.getPath('downloads'), `Ryvie-rDrop-${dateStr}`);
   app.setPath('downloads', downloadPath);
 });
 
@@ -48,10 +42,11 @@ ipcMain.handle('change-download-folder', async () => {
   });
 
   if (!result.canceled && result.filePaths.length > 0) {
-    downloadPath = path.join(result.filePaths[0], 'Ryvie-rDrop');
-    if (!fs.existsSync(downloadPath)) {
-      fs.mkdirSync(downloadPath, { recursive: true });
-    }
+    // Obtenir la date du jour formatée
+    const today = new Date();
+    const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    
+    downloadPath = path.join(result.filePaths[0], `Ryvie-rDrop-${dateStr}`);
     app.setPath('downloads', downloadPath);
     return downloadPath;
   }
@@ -333,7 +328,7 @@ ipcMain.on('update-access-mode', (event, mode) => {
   }
 });
 
-// Initialize the default user with role from LDAP
+// Initialize the default user
 async function initializeDefaultUser() {
   try {
  // Default user ID
@@ -419,4 +414,14 @@ app.on('activate', () => {
     // Initialize the default user
     initializeDefaultUser();
   }
+});
+
+// Assurer que le dossier de téléchargement existe avant un téléchargement
+app.on('session-created', (session) => {
+  session.on('will-download', (event, item) => {
+    // Créer le dossier de téléchargement uniquement quand un téléchargement démarre
+    if (!fs.existsSync(downloadPath)) {
+      fs.mkdirSync(downloadPath, { recursive: true });
+    }
+  });
 });

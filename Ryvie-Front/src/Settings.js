@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import './styles/Settings.css';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faServer, faHdd, faDatabase, faPlug } from '@fortawesome/free-solid-svg-icons';
 const { getServerUrl } = require('./config/urls');
 
 const Settings = () => {
@@ -105,6 +107,8 @@ const Settings = () => {
 
   const [changeStatus, setChangeStatus] = useState({ show: false, success: false });
   const [accessMode, setAccessMode] = useState('private');
+  const [systemDisksInfo, setSystemDisksInfo] = useState(null);
+  const [showDisksInfo, setShowDisksInfo] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -279,6 +283,17 @@ const Settings = () => {
     return ((used / total) * 100).toFixed(1) + '%';
   };
 
+  const handleShowDisks = async () => {
+    const baseUrl = getServerUrl(accessMode);
+    try {
+      const response = await axios.get(`${baseUrl}/api/disks`);
+      setSystemDisksInfo(response.data);
+      setShowDisksInfo(!showDisksInfo);
+    } catch (error) {
+      console.error('Erreur lors de la récupération des informations des disques:', error);
+    }
+  };
+
   if (loading) {
     return (
       <div className="settings-loading">
@@ -303,7 +318,7 @@ const Settings = () => {
         <h2>Vue d'ensemble du système</h2>
         <div className="stats-grid">
           {/* Stockage */}
-          <div className="stat-card storage">
+          <div className="stat-card storage" onClick={handleShowDisks} style={{ cursor: 'pointer' }}>
             <h3>Stockage</h3>
             <div className="progress-container">
               <div 
@@ -374,6 +389,131 @@ const Settings = () => {
           </div>
         </div>
       </section>
+
+      {/* Modal Détails Disques */}
+      {showDisksInfo && systemDisksInfo && (
+        <div className="disks-modal-overlay">
+          <div className="disks-modal">
+            <div className="disks-modal-header">
+              <h3>Détails des disques</h3>
+              <button className="close-modal-btn" onClick={() => setShowDisksInfo(false)}>×</button>
+            </div>
+            <div className="disks-modal-content">
+              <div className="disks-grid">
+                {systemDisksInfo.disks.map((disk, idx) => {
+                  // Calcul du pourcentage d'utilisation
+                  const usedSizeGB = parseFloat(disk.used.replace(' GB', ''));
+                  const totalSizeGB = parseFloat(disk.size.replace(' GB', ''));
+                  const usedPercentage = Math.round((usedSizeGB / totalSizeGB) * 100) || 0;
+                  
+                  return (
+                    <div key={idx} className={`disk-card ${disk.mounted ? 'mounted' : 'unmounted'}`}>
+                      <div className="disk-header">
+                        <div className="disk-name-with-status">
+                          <FontAwesomeIcon icon={faHdd} className={`disk-icon-visual ${disk.mounted ? 'mounted' : 'unmounted'}`} />
+                          <div className="disk-title-area">
+                            <h4>{disk.device}</h4>
+                            <div className={`disk-status-badge ${disk.mounted ? 'mounted' : 'unmounted'}`}>
+                              <span className="status-dot"></span>
+                              {disk.mounted ? 'Monté' : 'Démonté'}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="disk-details">
+                        <div className="disk-info-rows">
+                          <div className="disk-info-row">
+                            <span>Capacité:</span>
+                            <strong>{disk.size}</strong>
+                          </div>
+                          <div className="disk-info-row">
+                            <span>Utilisé:</span>
+                            <strong>{disk.used}</strong>
+                          </div>
+                          <div className="disk-info-row">
+                            <span>Libre:</span>
+                            <strong>{disk.free}</strong>
+                          </div>
+                        </div>
+                        
+                        {disk.mounted ? (
+                          <div className="disk-usage-bar-container">
+                            <div className="disk-usage-label">
+                              <span>Utilisation:</span>
+                              <strong>{usedPercentage}%</strong>
+                            </div>
+                            <div className="disk-usage-bar">
+                              <div 
+                                className="disk-usage-fill" 
+                                style={{ width: `${usedPercentage}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        ) : (
+                          <button 
+                            className="mount-disk-button"
+                            onClick={() => console.log(`Monter le disque ${disk.device}`)}
+                          >
+                            <FontAwesomeIcon icon={faPlug} /> Monter le disque
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              <div className="disk-total-card">
+                <div className="disk-total-header">
+                  <FontAwesomeIcon icon={faDatabase} className="disk-total-icon" />
+                  <h3>Stockage Total</h3>
+                </div>
+                
+                <div className="disk-total-content">
+                  <div className="disk-info-rows">
+                    <div className="disk-info-row">
+                      <span>Capacité:</span>
+                      <strong>{systemDisksInfo.total.size}</strong>
+                    </div>
+                    <div className="disk-info-row">
+                      <span>Utilisé:</span>
+                      <strong>{systemDisksInfo.total.used}</strong>
+                    </div>
+                    <div className="disk-info-row">
+                      <span>Libre:</span>
+                      <strong>{systemDisksInfo.total.free}</strong>
+                    </div>
+                  </div>
+                  
+                  {/* Calcul du pourcentage d'utilisation pour le total */}
+                  {(() => {
+                    const totalUsedGB = parseFloat(systemDisksInfo.total.used.replace(' GB', ''));
+                    const totalSizeGB = parseFloat(systemDisksInfo.total.size.replace(' GB', ''));
+                    const totalUsedPercentage = Math.round((totalUsedGB / totalSizeGB) * 100) || 0;
+                    
+                    return (
+                      <div className="disk-usage-bar-container total">
+                        <div className="disk-usage-label">
+                          <span>Utilisation globale:</span>
+                          <strong>{totalUsedPercentage}%</strong>
+                        </div>
+                        <div className="disk-usage-bar">
+                          <div 
+                            className="disk-usage-fill" 
+                            style={{ width: `${totalUsedPercentage}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Section Téléchargements */}
       <section className="settings-section">
         <h2>Configuration des téléchargements</h2>
@@ -681,33 +821,45 @@ const Settings = () => {
               {disks.map(disk => (
                 <div key={disk.id} className="disk-card">
                   <div className="disk-header">
-                    <h4>{disk.name}</h4>
-                    <span className={`health-indicator ${disk.health}`}></span>
-                  </div>
-                  <div className="disk-info">
-                    <div className="disk-stat">
-                      <span>Capacité</span>
-                      <strong>{disk.size}</strong>
-                    </div>
-                    <div className="disk-stat">
-                      <span>Utilisé</span>
-                      <strong>{disk.used}</strong>
-                    </div>
-                    <div className="disk-stat">
-                      <span>Type</span>
-                      <strong>{disk.type}</strong>
-                    </div>
-                    <div className="disk-stat">
-                      <span>État</span>
-                      <strong className={disk.status}>{disk.status}</strong>
+                    <div className="disk-name-with-status">
+                      <FontAwesomeIcon icon={faHdd} className={`disk-icon-visual ${disk.status}`}/>
+                      <div className="disk-title-area">
+                        <h4>{disk.name}</h4>
+                        <div className={`disk-status-badge ${disk.status}`}>
+                          <span className="status-dot"></span>
+                          {disk.status}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <div className="disk-usage">
-                    <div className="progress-container">
-                      <div 
-                        className="progress-bar"
-                        style={{ width: '40%' }}
-                      ></div>
+                  
+                  <div className="disk-details">
+                    <div className="disk-info-rows">
+                      <div className="disk-info-row">
+                        <span>Capacité:</span>
+                        <strong>{disk.size}</strong>
+                      </div>
+                      <div className="disk-info-row">
+                        <span>Utilisé:</span>
+                        <strong>{disk.used}</strong>
+                      </div>
+                      <div className="disk-info-row">
+                        <span>Libre:</span>
+                        <strong>{disk.free}</strong>
+                      </div>
+                    </div>
+                    
+                    <div className="disk-usage-bar-container">
+                      <div className="disk-usage-label">
+                        <span>Utilisation:</span>
+                        <strong>{((parseFloat(disk.used.replace(' GB', '')) / parseFloat(disk.size.replace(' GB', ''))) * 100).toFixed(1)}%</strong>
+                      </div>
+                      <div className="disk-usage-bar">
+                        <div 
+                          className="disk-usage-fill" 
+                          style={{ width: `${((parseFloat(disk.used.replace(' GB', '')) / parseFloat(disk.size.replace(' GB', ''))) * 100).toFixed(1)}%` }}
+                        ></div>
+                      </div>
                     </div>
                   </div>
                 </div>
