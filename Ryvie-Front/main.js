@@ -203,6 +203,24 @@ ipcMain.handle('create-user-window-with-mode', async (event, userId, accessMode,
   // Add the window to the map
   userWindows.set(`${userId}-${accessMode}-${userRole}`, window);
   
+  // Close the login window after creating the new window successfully
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (senderWindow && !senderWindow.isDestroyed()) {
+    // Petit délai pour s'assurer que la nouvelle fenêtre est bien chargée
+    setTimeout(() => {
+      senderWindow.close();
+    }, 1000);
+  }
+  
+  return true;
+});
+
+// Ajouter un gestionnaire IPC pour fermer la fenêtre actuelle
+ipcMain.handle('close-current-window', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (window && !window.isDestroyed()) {
+    window.close();
+  }
   return true;
 });
 

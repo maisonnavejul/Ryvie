@@ -25,12 +25,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Nouvelles fonctions pour la gestion des sessions utilisateur
   invoke: (channel, ...args) => {
-    const validChannels = ['create-user-window', 'clear-user-session', 'create-user-window-with-mode', 'update-session-partition'];
+    const validChannels = ['create-user-window', 'clear-user-session', 'create-user-window-with-mode', 'update-session-partition', 'close-current-window'];
     if (validChannels.includes(channel)) {
       return ipcRenderer.invoke(channel, ...args);
     }
     throw new Error(`Channel "${channel}" is not allowed`);
-  }
+  },
+  
+  // Fermer la fenêtre actuelle
+  closeCurrentWindow: () => ipcRenderer.invoke('close-current-window')
 });
 
 // Ce script sera chargé avant que la page soit rendue
