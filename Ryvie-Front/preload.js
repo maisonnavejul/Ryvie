@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onServerStatus: (callback) => ipcRenderer.on('server-status', callback),
   // Recevoir l'ID utilisateur actuel
   onSetCurrentUser: (callback) => ipcRenderer.on('set-current-user', callback),
+  // Recevoir le token d'authentification
+  onSetAuthToken: (callback) => ipcRenderer.on('set-auth-token', callback),
 
   // Fonctions de gestion du dossier de téléchargement
   changeDownloadFolder: () => ipcRenderer.invoke('change-download-folder'),

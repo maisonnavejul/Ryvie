@@ -135,12 +135,27 @@ function createWindowForUser(userId, accessMode, userRole) {
     return { action: 'deny' };
   });
 
-  window.loadURL(process.env.NODE_ENV === 'development'
-    ? 'http://localhost:3000'
-    : `file://${path.join(__dirname, 'dist/index.html')}`);
-
-  // Pass the user ID to the renderer process once the window is loaded
+  // Ajouter un événement pour transmettre les informations d'authentification
   window.webContents.on('did-finish-load', () => {
+    const token = global.authToken;
+    const currentUser = global.currentUser;
+    const currentUserRole = global.currentUserRole;
+    
+    // Transmettre l'authentification si les informations sont disponibles
+    if (token && currentUser && userId === currentUser) {
+      window.webContents.send('set-auth-token', {
+        token,
+        userId: currentUser,
+        userRole: currentUserRole
+      });
+      
+      // Effacer les variables globales après transmission
+      global.authToken = null;
+      global.currentUser = null;
+      global.currentUserRole = null;
+    }
+    
+    // Transmettre l'utilisateur actuel
     window.webContents.send('set-current-user', userId);
     window.webContents.send('set-user-role', userRole);
     
@@ -151,21 +166,43 @@ function createWindowForUser(userId, accessMode, userRole) {
       console.log('Informations utilisateur stockées dans localStorage:', '${userId}', '${userRole}');
     `);
   });
+  
+  window.loadURL(process.env.NODE_ENV === 'development'
+    ? 'http://localhost:3000'
+    : `file://${path.join(__dirname, 'dist/index.html')}`);
 
   userWindows.set(`${userId}-${accessMode}-${userRole}`, window);
   return window;
 }
 
 // Add a new IPC handler to create windows with specific access mode
-ipcMain.handle('create-user-window-with-mode', async (event, userId, accessMode, userRole) => {
+ipcMain.handle('create-user-window-with-mode', async (event, userId, accessMode, userRole, token) => {
   if (userWindows.has(`${userId}-${accessMode}-${userRole}`)) {
     const existingWindow = userWindows.get(`${userId}-${accessMode}-${userRole}`);
     if (!existingWindow.isDestroyed()) {
       existingWindow.focus();
       return;
     }
+    userWindows.delete(`${userId}-${accessMode}-${userRole}`);
   }
-  createWindowForUser(userId, accessMode, userRole);
+
+  // Store access mode globally
+  global.accessMode = accessMode;
+  console.log(`Mode d'accès défini : ${accessMode}`);
+
+  // Create a new window for the user
+  const window = createWindowForUser(userId, accessMode, userRole);
+  
+  // Store the token for transfer to the new window
+  if (token) {
+    global.authToken = token;
+    global.currentUser = userId;
+    global.currentUserRole = userRole;
+  }
+  
+  // Add the window to the map
+  userWindows.set(`${userId}-${accessMode}-${userRole}`, window);
+  
   return true;
 });
 
@@ -328,80 +365,48 @@ ipcMain.on('update-access-mode', (event, mode) => {
   }
 });
 
-// Initialize the default user
-async function initializeDefaultUser() {
-  try {
- // Default user ID
- const defaultUserId = 'jules';
-    
- // Tester d'abord la connexion en mode privé, puis basculer en public si nécessaire
- let accessMode = 'private'; // Mode par défaut initial
- 
- // Fonction pour tester la connexion à un serveur
- async function testConnection(url) {
-   try {
-     console.log(`Test de connexion à ${url}...`);
-     const response = await axios.get(`${url}/status`, { timeout: 3000 });
-     return response.status === 200;
-   } catch (error) {
-     console.log(`Connexion à ${url} échouée: ${error.message}`);
-     return false;
-   }
- }
- 
- // Tester la connexion au serveur privé (ryvie.local)
- const privateServerUrl = getServerUrl('private');
- const isPrivateServerReachable = await testConnection(privateServerUrl);
- 
- if (isPrivateServerReachable) {
-   console.log('Serveur privé (ryvie.local) accessible, utilisation du mode privé');
-   accessMode = 'private';
- } else {
-   console.log('Serveur privé (ryvie.local) inaccessible, basculement en mode public');
-   accessMode = 'public';
- }
- 
- console.log(`Mode d'accès déterminé: ${accessMode}`);
-    try {
-      //console.log('Fetched users for initialization:', users.length);
-      const users = await fetchUsers(accessMode);
-      //enregristrer en global
-      global.accessMode = accessMode;
-      console.log('Fetched users for initialization:', users.length);
-      // Look for jules in the users
-      const defaultUser = users.find(user => 
-        user.id === defaultUserId || 
-        user.name === defaultUserId || 
-        user.id.toLowerCase() === defaultUserId || 
-        user.name.toLowerCase() === defaultUserId
-      );
-      
-      if (defaultUser) {
-        console.log(`Default user found: ${defaultUser.name} with role ${defaultUser.role}`);
-        // Create window for the default user with their role
-        createWindowForUser(defaultUser.id, accessMode, defaultUser.role);
-      } else {
-        console.log(`Default user "${defaultUserId}" not found in LDAP, using as is`);
-        //createWindowForUser(defaultUserId);
-        //createWindowForUser(defaultUserId, 'public', 'Admin');
-      }
-    } catch (error) {
-      console.error('Error fetching users for initialization:', error);
-      //createWindowForUser(defaultUserId);
-    }
-    
-    // Start the UDP backend
-    startUdpBackend();
-  } catch (error) {
-    console.error('Error initializing default user:', error);
-    // Fallback to just using 'jules' without role information
-    startUdpBackend();
+// Function to create login window
+function createLoginWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 720,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+      enableRemoteModule: true,
+      webSecurity: false
+    },
+    autoHideMenuBar: true, // Cache automatiquement la barre de menu ( enlever si besoin)
+    frame: true,
+  });
+
+  // Load the login page
+  const startUrl = process.env.ELECTRON_START_URL || 'http://localhost:3000/#/login';
+  mainWindow.loadURL(startUrl);
+  
+  // Open the DevTools in development mode
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.webContents.openDevTools();
   }
+  
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
+  console.log('Fenêtre de login créée avec succès');
 }
 
 app.whenReady().then(() => {
-  // Initialize the default user
-  initializeDefaultUser();
+  // Nous n'initialisons plus automatiquement un utilisateur par défaut
+  // car nous utilisons maintenant la page de connexion
+  // initializeDefaultUser();
+  
+  // Créer une fenêtre de connexion au démarrage
+  createLoginWindow();
+  
+  // Démarrer uniquement le backend UDP
+  startUdpBackend();
 });
 
 app.on('window-all-closed', () => {
@@ -412,7 +417,7 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     // Initialize the default user
-    initializeDefaultUser();
+    //initializeDefaultUser();
   }
 });
 

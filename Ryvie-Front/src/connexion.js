@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import './styles/connexion.css';
 const { getServerUrl } = require('./config/urls');
 
-const UserLogin = () => {
+const Userlogin = () => {
   const navigate = useNavigate();
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState('info'); // 'info', 'success', 'error'
@@ -73,17 +73,34 @@ const UserLogin = () => {
         password: password
       });
 
-      if (response.data && response.data.message === "Authentification réussie") {
-        // Authentification réussie, procéder à l'ouverture de la fenêtre
-        setMessage('Authentification réussie. Ouverture de la session...');
+      if (response.data && response.data.token) {
+        // Authentification réussie, stocker le token JWT et les informations utilisateur
+        localStorage.setItem('jwt_token', response.data.token);
+        localStorage.setItem('currentUser', selectedUser.name || selectedUser.id);
+        localStorage.setItem('currentUserRole', response.data.user.role || 'User');
+        localStorage.setItem('currentUserEmail', response.data.user.email || '');
+        
+        // Configurer axios pour inclure le token dans les futures requêtes
+        axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.token}`;
+        
+        setMessage('Authentification réussie. Ouverture d\'une nouvelle session...');
         setMessageType('success');
-        await openUserWindow(selectedUser.id, selectedUser.name);
+        
+        // Fermer le modal
         setShowPasswordModal(false);
         setPassword('');
         setLoginAttempts(0);
+        
+        // Ouvrir une nouvelle fenêtre pour l'utilisateur en utilisant l'API Electron
+        await openUserWindow(
+          selectedUser.id, 
+          selectedUser.name, 
+          response.data.user.role || 'User',
+          response.data.token
+        );
       } else {
         setLoginAttempts(prev => prev + 1);
-        setMessage('Échec de l\'authentification. Mot de passe incorrect.');
+        setMessage('Échec de l\'authentification. Réponse du serveur invalide.');
         setMessageType('error');
       }
     } catch (error) {
@@ -98,7 +115,7 @@ const UserLogin = () => {
         } else if (error.response.status === 429) {
           setMessage('Trop de tentatives de connexion. Veuillez réessayer plus tard.');
         } else {
-          setMessage(`Erreur d'authentification: ${error.response.data?.message || 'Erreur serveur'}`);
+          setMessage(`Erreur d'authentification: ${error.response.data?.error || 'Erreur serveur'}`);
         }
       } else if (error.request) {
         // La requête a été faite mais pas de réponse
@@ -114,25 +131,25 @@ const UserLogin = () => {
     }
   };
 
-  const openUserWindow = async (userId, userName) => {
+  const openUserWindow = async (userId, userName, userRole, token) => {
     try {
-      console.log(`Ouverture de session pour: ${userName}`);
-      
-      // Stocker le nom de l'utilisateur dans localStorage
-      localStorage.setItem('currentUser', userId);
-      
+      console.log(`Ouverture de session pour: ${userName} avec le rôle ${userRole}`);
       
       // Récupérer le mode d'accès actuel (privé ou public)
       const accessMode = localStorage.getItem('accessMode') || 'private';
-      const userObj = users.find(user => user.id === userId);
-      const userRole = userObj ? userObj.role : '';
-      localStorage.setItem('currentUserRole', userRole);
-      console.log('userRole', userRole);
       
-      // Ouvrir une nouvelle fenêtre pour cet utilisateur avec le mode d'accès spécifié
-      await window.electronAPI.invoke('create-user-window-with-mode', userName, accessMode, userRole);
-      setMessage(`Fenêtre ouverte pour ${userName} en mode ${accessMode} avec le rôle ${userRole}`);
-      setMessageType('success');
+      // Vérifier si l'API Electron est disponible
+      if (window.electronAPI && typeof window.electronAPI.invoke === 'function') {
+        // Créer une nouvelle fenêtre pour cet utilisateur avec le mode d'accès spécifié
+        await window.electronAPI.invoke('create-user-window-with-mode', userId, accessMode, userRole, token);
+        setMessage(`Fenêtre ouverte pour ${userName} en mode ${accessMode} avec le rôle ${userRole}`);
+        setMessageType('success');
+      } else {
+        // Si nous sommes dans un navigateur, rediriger vers la page d'accueil
+        navigate('/');
+        setMessage(`Mode navigateur : redirection vers l'accueil pour ${userName}`);
+        setMessageType('info');
+      }
     } catch (error) {
       console.error('Erreur lors de l\'ouverture de la fenêtre:', error);
       setMessage(`Erreur lors de l'ouverture de la fenêtre: ${error.message}`);
@@ -266,4 +283,4 @@ const UserLogin = () => {
   );
 };
 
-export default UserLogin;
+export default Userlogin;

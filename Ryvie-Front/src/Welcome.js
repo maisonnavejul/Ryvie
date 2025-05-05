@@ -34,12 +34,31 @@ const Welcome = () => {
   // Retrieve the user from localStorage as fallback
   useEffect(() => {
     const storedUser = localStorage.getItem('currentUser');
+    const token = localStorage.getItem('jwt_token');
+    console.log('Welcome - Stored user and token:', { storedUser, hasToken: !!token });
+    
     if (storedUser) {
       setCurrentUser(storedUser);
     }
+
+    // S'assurer que le token JWT est configuré dans axios pour toutes les requêtes
+    if (token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      console.log('Welcome - Token JWT configuré dans les en-têtes axios');
+    }
+
+    // Écouter les changements de localStorage (pour les fenêtres multiples)
+    const handleStorageChange = (e) => {
+      if (e.key === 'currentUser' && e.newValue) {
+        console.log('Changement d\'utilisateur détecté:', e.newValue);
+        setCurrentUser(e.newValue);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // Effet pour récupérer l'utilisateur actuel depuis localStorage
   useEffect(() => {
     
     // Vérifier s'il y a un utilisateur dans localStorage
@@ -99,6 +118,21 @@ const Welcome = () => {
       setLoading(false);
     }
 
+    // Add a delay to the server detection to make it more visible
+    const checkServer = async () => {
+      try {
+        const response = await axios.get('http://ryvie.local:3002/api/server-status');
+        if (response.data.status === 'online') {
+          // Add a deliberate delay to show the loading animation
+          setTimeout(() => {
+            setServerIP('ryvie.local');
+            setLoading(false);
+          }, 2000); // 2-second delay to make the server detection more visible
+        }
+      } catch (error) {
+        console.error('Erreur lors de la vérification du serveur:', error);
+      }
+    };
 
     // Optimize initial loading
     const preloadAssets = () => {
@@ -127,7 +161,7 @@ const Welcome = () => {
     // Update the session partition without creating a new window
     if (window.electronAPI && currentUser) {
       // Récupérer le rôle de l'utilisateur depuis localStorage
-      const userRole = localStorage.getItem('currentUserRole') ;
+      const userRole = localStorage.getItem('currentUserRole') || 'User';
       
       // Get the current session's cookies and update the partition
       window.electronAPI.invoke('update-session-partition', currentUser, 'private', userRole)
@@ -152,7 +186,7 @@ const Welcome = () => {
     // Update the session partition without creating a new window
     if (window.electronAPI && currentUser) {
       // Récupérer le rôle de l'utilisateur depuis localStorage
-      const userRole = localStorage.getItem('currentUserRole');
+      const userRole = localStorage.getItem('currentUserRole') || 'User';
       
       // Get the current session's cookies and update the partition
       window.electronAPI.invoke('update-session-partition', currentUser, 'public', userRole)

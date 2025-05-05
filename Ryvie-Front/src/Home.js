@@ -90,7 +90,7 @@ const APPS_CONFIG = {
     urlKey: '',
     showStatus: false,
     isTaskbarApp: true,
-    route: '/login',
+    route: '/userlogin',
   },
     'settings.svg': {
     name: 'Settings',
