@@ -177,49 +177,69 @@ function createWindowForUser(userId, accessMode, userRole) {
 
 // Add a new IPC handler to create windows with specific access mode
 ipcMain.handle('create-user-window-with-mode', async (event, userId, accessMode, userRole, token) => {
+  // Vérification rigoureuse des paramètres
+  if (!userId || !accessMode || !userRole || !token) {
+    console.error("❌ Paramètres manquants ou invalides:", { userId, accessMode, userRole, tokenPresent: !!token });
+    return false; // Ne pas fermer la fenêtre en cas de paramètres manquants
+  }
+
   if (userWindows.has(`${userId}-${accessMode}-${userRole}`)) {
     const existingWindow = userWindows.get(`${userId}-${accessMode}-${userRole}`);
     if (!existingWindow.isDestroyed()) {
       existingWindow.focus();
-      return;
+      return true;
     }
     userWindows.delete(`${userId}-${accessMode}-${userRole}`);
   }
 
-  // Store access mode globally
-  global.accessMode = accessMode;
-  console.log(`Mode d'accès défini : ${accessMode}`);
+  try {
+    // Store access mode globally
+    global.accessMode = accessMode;
+    console.log(`Mode d'accès défini : ${accessMode}`);
 
-  // Create a new window for the user
-  const window = createWindowForUser(userId, accessMode, userRole);
-  
-  // Store the token for transfer to the new window
-  if (token) {
+    // Create a new window for the user
+    const window = createWindowForUser(userId, accessMode, userRole);
+    
+    // Store the token for transfer to the new window
     global.authToken = token;
     global.currentUser = userId;
     global.currentUserRole = userRole;
+    
+    // Add the window to the map
+    userWindows.set(`${userId}-${accessMode}-${userRole}`, window);
+    
+    // Wait for window to be ready before closing login window
+    return new Promise((resolve) => {
+      window.webContents.once('did-finish-load', () => {
+        console.log("✅ Nouvelle fenêtre utilisateur chargée avec succès");
+        // Close the login window after creating the new window successfully
+        const senderWindow = BrowserWindow.fromWebContents(event.sender);
+        if (senderWindow && !senderWindow.isDestroyed()) {
+          // Petit délai pour s'assurer que la nouvelle fenêtre est bien chargée
+          setTimeout(() => {
+            senderWindow.close();
+          }, 1000);
+        }
+        resolve(true);
+      });
+      
+      // Si le chargement échoue, ne pas fermer la fenêtre de login
+      window.webContents.once('did-fail-load', (e, errorCode, errorDescription) => {
+        console.error("❌ Échec du chargement de la nouvelle fenêtre:", errorDescription);
+        resolve(false);
+      });
+    });
+  } catch (error) {
+    console.error("❌ Erreur lors de la création de la fenêtre:", error);
+    return false; // Ne pas fermer la fenêtre en cas d'erreur
   }
-  
-  // Add the window to the map
-  userWindows.set(`${userId}-${accessMode}-${userRole}`, window);
-  
-  // Close the login window after creating the new window successfully
-  const senderWindow = BrowserWindow.fromWebContents(event.sender);
-  if (senderWindow && !senderWindow.isDestroyed()) {
-    // Petit délai pour s'assurer que la nouvelle fenêtre est bien chargée
-    setTimeout(() => {
-      senderWindow.close();
-    }, 1000);
-  }
-  
-  return true;
 });
 
 // Ajouter un gestionnaire IPC pour fermer la fenêtre actuelle
 ipcMain.handle('close-current-window', (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (window && !window.isDestroyed()) {
-    window.close();
+    //window.close();
   }
   return true;
 });

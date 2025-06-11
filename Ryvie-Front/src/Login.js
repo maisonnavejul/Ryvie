@@ -69,12 +69,14 @@ const Login = () => {
       }
     } catch (error) {
       console.error('Erreur d\'authentification:', error);
+      setMessageType('error');
       
       // Gestion détaillée des erreurs
       if (error.response) {
         // Le serveur a répondu avec un code d'erreur
         if (error.response.status === 401) {
           setMessage('Identifiants incorrects. Veuillez réessayer.');
+          setMessageType('error');
         } else if (error.response.status === 429) {
           setMessage('Trop de tentatives de connexion. Veuillez réessayer plus tard.');
         } else {

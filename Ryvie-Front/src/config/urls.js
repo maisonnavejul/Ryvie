@@ -35,7 +35,7 @@ const BASE_URLS = {
       PRIVATE: 'http://ryvie.local:3000'
     },
     RDROP: {
-      PUBLIC: 'https://rdrop.makerfaire.jules.ryvie.fr',
+      PUBLIC: 'https://rdrop.test.jules.ryvie.fr',
       PRIVATE: 'http://ryvie.local:8080'
     },
     RPictures: {
