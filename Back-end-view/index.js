@@ -357,16 +357,16 @@ async function getServerInfo() {
 
 // LDAP Configuration
 const ldapConfig = {
-  url: process.env.LDAP_URL || 'ldap://localhost:389',
-  bindDN: process.env.LDAP_BIND_DN || 'cn=read-only,ou=users,dc=example,dc=org',
-  bindPassword: process.env.LDAP_BIND_PASSWORD || 'readpassword',
-  userSearchBase: process.env.LDAP_USER_SEARCH_BASE || 'ou=users,dc=example,dc=org',
-  groupSearchBase: process.env.LDAP_GROUP_SEARCH_BASE || 'ou=users,dc=example,dc=org',
-  userFilter: process.env.LDAP_USER_FILTER || '(objectClass=inetOrgPerson)',
-  groupFilter: process.env.LDAP_GROUP_FILTER || '(objectClass=groupOfNames)',
-  adminGroup: process.env.LDAP_ADMIN_GROUP || 'cn=admins,ou=users,dc=example,dc=org',
-  userGroup: process.env.LDAP_USER_GROUP || 'cn=users,ou=users,dc=example,dc=org',
-  guestGroup: process.env.LDAP_GUEST_GROUP || 'cn=guests,ou=users,dc=example,dc=org',
+  url: process.env.LDAP_URL,
+  bindDN: process.env.LDAP_BIND_DN,
+  bindPassword: process.env.LDAP_BIND_PASSWORD,
+  userSearchBase: process.env.LDAP_USER_SEARCH_BASE,
+  groupSearchBase: process.env.LDAP_GROUP_SEARCH_BASE,
+  userFilter: process.env.LDAP_USER_FILTER,
+  groupFilter: process.env.LDAP_GROUP_FILTER,
+  adminGroup: process.env.LDAP_ADMIN_GROUP,
+  userGroup: process.env.LDAP_USER_GROUP,
+  guestGroup: process.env.LDAP_GUEST_GROUP,
 };
 
 // Fonction pour déterminer le rôle
