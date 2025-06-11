@@ -9,6 +9,16 @@ const path = require('path');
 const ldap = require('ldapjs');
 const si = require('systeminformation');
 const osutils = require('os-utils');
+const jwt = require('jsonwebtoken');
+const dotenv = require('dotenv');
+
+// Charger les variables d'environnement du fichier .env
+dotenv.config();
+
+// Secret pour les JWT tokens
+const JWT_SECRET = process.env.JWT_SECRET || 'dQMsVQS39XkJRCHsAhJn3Hn2';
+
+const { verifyToken, isAdmin, hasPermission } = require('./middleware/auth');
 
 const docker = new Docker();
 const app = express();
@@ -21,6 +31,7 @@ const io = new Server(httpServer, {
 });
 
 app.use(cors());
+app.use(express.json());
 
 // Correspondances des noms de conteneurs Docker avec des noms personnalisés
 const containerMapping = {
@@ -346,16 +357,16 @@ async function getServerInfo() {
 
 // LDAP Configuration
 const ldapConfig = {
-  url: 'ldap://localhost:389',
-  bindDN: 'cn=read-only,ou=users,dc=example,dc=org',
-  bindPassword: 'Wimereux',
-  userSearchBase: 'ou=users,dc=example,dc=org',
-  groupSearchBase: 'ou=users,dc=example,dc=org',
-  userFilter: '(objectClass=inetOrgPerson)',
-  groupFilter: '(objectClass=groupOfNames)',
-  adminGroup: 'cn=admins,ou=users,dc=example,dc=org',
-  userGroup: 'cn=users,ou=users,dc=example,dc=org',
-  guestGroup: 'cn=guests,ou=users,dc=example,dc=org',
+  url: process.env.LDAP_URL,
+  bindDN: process.env.LDAP_BIND_DN,
+  bindPassword: process.env.LDAP_BIND_PASSWORD,
+  userSearchBase: process.env.LDAP_USER_SEARCH_BASE,
+  groupSearchBase: process.env.LDAP_GROUP_SEARCH_BASE,
+  userFilter: process.env.LDAP_USER_FILTER,
+  groupFilter: process.env.LDAP_GROUP_FILTER,
+  adminGroup: process.env.LDAP_ADMIN_GROUP,
+  userGroup: process.env.LDAP_USER_GROUP,
+  guestGroup: process.env.LDAP_GUEST_GROUP,
 };
 
 // Fonction pour déterminer le rôle
@@ -367,7 +378,7 @@ function getRole(dn, groupMemberships) {
 }
 
 // Endpoint : Récupérer les utilisateurs LDAP
-app.get('/api/users', async (req, res) => {
+app.get('/api/users', verifyToken, async (req, res) => {
   const ldapClient = ldap.createClient({ url: ldapConfig.url });
 
   ldapClient.bind(ldapConfig.bindDN, ldapConfig.bindPassword, (err) => {
@@ -449,8 +460,6 @@ app.get('/api/users', async (req, res) => {
 });
 
 // Endpoint : Authentification utilisateur LDAP
-app.use(express.json()); // Pour parser le JSON dans les requêtes POST
-
 app.post('/api/authenticate', (req, res) => {
   const { uid, password } = req.body;
 
@@ -458,8 +467,14 @@ app.post('/api/authenticate', (req, res) => {
     return res.status(400).json({ error: 'UID et mot de passe requis' });
   }
 
-  const ldapClient = ldap.createClient({ url: ldapConfig.url });
+  const ldapClient = ldap.createClient({ 
+    url: ldapConfig.url,
+    timeout: 5000,
+    connectTimeout: 5000
+  });
 
+  console.log(`Tentative d'authentification pour l'utilisateur: ${uid}`);
+  
   // Première connexion pour rechercher le DN utilisateur
   ldapClient.bind(ldapConfig.bindDN, ldapConfig.bindPassword, (err) => {
     if (err) {
@@ -467,10 +482,14 @@ app.post('/api/authenticate', (req, res) => {
       return res.status(500).json({ error: 'Échec de connexion LDAP initiale' });
     }
 
-    const userFilter = `(&(uid=${uid})${ldapConfig.userFilter})`;
+    // Rechercher l'utilisateur par uid ou cn
+    const userFilter = `(|(uid=${uid})(cn=${uid}))`;
+    const searchFilter = `(&${userFilter}${ldapConfig.userFilter})`;
+    
+    console.log('Recherche utilisateur avec filtre:', searchFilter);
 
     ldapClient.search(ldapConfig.userSearchBase, {
-      filter: userFilter,
+      filter: searchFilter,
       scope: 'sub',
       attributes: ['dn', 'cn', 'mail', 'uid'],
     }, (err, ldapRes) => {
@@ -483,37 +502,139 @@ app.post('/api/authenticate', (req, res) => {
 
       ldapRes.on('searchEntry', (entry) => {
         userEntry = entry;
+        console.log('Entrée LDAP trouvée:', entry.pojo.objectName);
+      });
+
+      ldapRes.on('error', (err) => {
+        console.error('Erreur lors de la recherche LDAP:', err);
       });
 
       ldapRes.on('end', () => {
         if (!userEntry) {
+          console.error(`Utilisateur ${uid} non trouvé dans LDAP`);
           ldapClient.unbind();
           return res.status(401).json({ error: 'Utilisateur non trouvé' });
         }
 
         const userDN = userEntry.pojo.objectName;
+        console.log(`DN utilisateur trouvé: ${userDN}`);
 
         // Tente de connecter l'utilisateur avec son propre DN et mot de passe
-        const userAuthClient = ldap.createClient({ url: ldapConfig.url });
+        const userAuthClient = ldap.createClient({ 
+          url: ldapConfig.url,
+          timeout: 5000,
+          connectTimeout: 5000
+        });
+        
         userAuthClient.bind(userDN, password, (err) => {
           if (err) {
             console.error('Échec de l\'authentification utilisateur:', err);
             ldapClient.unbind();
+            userAuthClient.destroy();
             return res.status(401).json({ error: 'Identifiant ou mot de passe incorrect' });
           }
 
           // Authentification réussie
-          ldapClient.unbind();
+          console.log(`Authentification réussie pour ${uid}`);
           userAuthClient.unbind();
+          
+          // Rechercher l'appartenance aux groupes
+          let role = 'Guest'; // Rôle par défaut
+          
+          // Vérifier si l'utilisateur est membre du groupe Admin
+          ldapClient.search(ldapConfig.adminGroup, {
+            scope: 'base',
+            filter: '(objectClass=*)',
+            attributes: ['member']
+          }, (err, groupRes) => {
+            if (err) {
+              console.error('Erreur lors de la recherche du groupe admin:', err);
+              // Continuer avec le rôle par défaut
+              completeAuthentication();
+              return;
+            }
+            
+            let isAdmin = false;
+            
+            groupRes.on('searchEntry', (entry) => {
+              const members = entry.pojo.attributes.find(attr => attr.type === 'member')?.values || [];
+              if (members.includes(userDN)) {
+                isAdmin = true;
+                role = 'Admin';
+                console.log(`L'utilisateur ${uid} est membre du groupe admin`);
+              }
+            });
+            
+            groupRes.on('end', () => {
+              if (!isAdmin) {
+                // Si pas admin, vérifier si membre du groupe User
+                ldapClient.search(ldapConfig.userGroup, {
+                  scope: 'base',
+                  filter: '(objectClass=*)',
+                  attributes: ['member']
+                }, (err, userGroupRes) => {
+                  if (err) {
+                    console.error('Erreur lors de la recherche du groupe user:', err);
+                    // Continuer avec le rôle par défaut
+                    completeAuthentication();
+                    return;
+                  }
+                  
+                  userGroupRes.on('searchEntry', (entry) => {
+                    const members = entry.pojo.attributes.find(attr => attr.type === 'member')?.values || [];
+                    if (members.includes(userDN)) {
+                      role = 'User';
+                      console.log(`L'utilisateur ${uid} est membre du groupe user`);
+                    }
+                  });
+                  
+                  userGroupRes.on('end', () => {
+                    completeAuthentication();
+                  });
+                });
+              } else {
+                completeAuthentication();
+              }
+            });
+          });
+          
+          // Fonction pour finaliser l'authentification avec le rôle déterminé
+          function completeAuthentication() {
+            // Pour l'utilisateur jules, on force le rôle Admin pour les tests
+            if (uid === 'jules') {
+              role = 'Admin';
+            }
+            
+            ldapClient.unbind();
+            
+            const userAttrs = {};
+            userEntry.pojo.attributes.forEach(attr => {
+              userAttrs[attr.type] = attr.values[0];
+            });
+            
+            const user = {
+              uid: userAttrs.uid || userAttrs.cn || uid,
+              name: userAttrs.cn || uid,
+              email: userAttrs.mail || `${uid}@example.com`,
+              role: role
+            };
+            
+            console.log(`Authentification complétée pour ${uid} avec le rôle ${role}`);
 
-          const user = {
-            dn: userDN,
-            uid: userEntry.pojo.attributes.find(attr => attr.type === 'uid')?.values[0],
-            name: userEntry.pojo.attributes.find(attr => attr.type === 'cn')?.values[0],
-            email: userEntry.pojo.attributes.find(attr => attr.type === 'mail')?.values[0],
-          };
+            // Générer un token JWT
+            const token = jwt.sign(
+              user,
+              JWT_SECRET,
+              { expiresIn: '24h' }
+            );
 
-          res.json({ message: 'Authentification réussie', user });
+            res.json({ 
+              message: 'Authentification réussie', 
+              user: user,
+              token: token,
+              expiresIn: 86400 // 24h en secondes
+            });
+          }
         });
       });
     });
@@ -573,11 +694,11 @@ app.post('/api/add-user', async (req, res) => {
             filter: `(member=${adminDN})`,
             scope: 'base',
             attributes: ['cn'],
-          }, (err, roleRes) => {
+          }, (err, groupRes) => {
             let isAdmin = false;
-            roleRes.on('searchEntry', () => isAdmin = true);
+            groupRes.on('searchEntry', () => isAdmin = true);
 
-            roleRes.on('end', () => {
+            groupRes.on('end', () => {
               if (!isAdmin) {
                 ldapClient.unbind();
                 adminAuthClient.unbind();
@@ -710,16 +831,16 @@ app.post('/api/delete-user', async (req, res) => {
       filter: adminFilter,
       scope: 'sub',
       attributes: ['dn'],
-    }, (err, adminRes) => {
+    }, (err, ldapRes) => {
       if (err) {
         console.error('Erreur recherche admin :', err);
         return res.status(500).json({ error: 'Erreur recherche admin' });
       }
 
       let adminEntry;
-      adminRes.on('searchEntry', entry => adminEntry = entry);
+      ldapRes.on('searchEntry', entry => adminEntry = entry);
 
-      adminRes.on('end', () => {
+      ldapRes.on('end', () => {
         if (!adminEntry) {
           ldapClient.unbind();
           return res.status(401).json({ error: 'Admin non trouvé' });
@@ -834,7 +955,7 @@ app.get('/status', (req, res) => {
   });
 });
 
-app.get('/api/server-info', async (req, res) => {
+app.get('/api/server-info', verifyToken, async (req, res) => {
   try {
     const serverInfo = await getServerInfo();
     res.json(serverInfo);
@@ -910,7 +1031,7 @@ app.get('/api/apps', async (req, res) => {
 });
 
 // Endpoint : Démarrer une application
-app.post('/api/apps/:id/start', async (req, res) => {
+app.post('/api/apps/:id/start', verifyToken, hasPermission('manage_apps'), async (req, res) => {
   const { id } = req.params;
   
   try {
@@ -926,7 +1047,7 @@ app.post('/api/apps/:id/start', async (req, res) => {
 });
 
 // Endpoint : Arrêter une application
-app.post('/api/apps/:id/stop', async (req, res) => {
+app.post('/api/apps/:id/stop', verifyToken, hasPermission('manage_apps'), async (req, res) => {
   const { id } = req.params;
   
   try {
@@ -942,7 +1063,7 @@ app.post('/api/apps/:id/stop', async (req, res) => {
 });
 
 // Endpoint : Redémarrer une application
-app.post('/api/apps/:id/restart', async (req, res) => {
+app.post('/api/apps/:id/restart', verifyToken, hasPermission('manage_apps'), async (req, res) => {
   const { id } = req.params;
   
   try {
@@ -954,6 +1075,134 @@ app.post('/api/apps/:id/restart', async (req, res) => {
       error: `Erreur serveur lors du redémarrage de l'application`,
       message: error.message
     });
+  }
+});
+
+// Endpoint public pour récupérer la liste des utilisateurs (utilisé pour la page de connexion)
+app.get('/api/users-public', async (req, res) => {
+  const ldapClient = ldap.createClient({ 
+    url: ldapConfig.url,
+    timeout: 5000,
+    connectTimeout: 5000
+  });
+
+  ldapClient.bind(ldapConfig.bindDN, ldapConfig.bindPassword, (err) => {
+    if (err) {
+      console.error('Échec de la connexion LDAP :', err);
+      // En cas d'erreur, retourner une liste d'utilisateurs par défaut
+      return res.json([
+        { uid: 'jules', name: 'Jules', role: 'Admin', email: 'jules.maisonnave@gmail.com' },
+        { uid: 'cynthia', name: 'Cynthia', role: 'User', email: 'cynthia@example.com' },
+        { uid: 'test', name: 'Test', role: 'User', email: 'test@gmail.com' }
+      ]);
+    }
+
+    const ldapUsers = [];
+    
+    // Utiliser le filtre défini dans la configuration
+    console.log('Recherche d\'utilisateurs avec filtre:', ldapConfig.userFilter);
+    
+    ldapClient.search(
+      ldapConfig.userSearchBase,
+      { filter: ldapConfig.userFilter, scope: 'sub', attributes: ['cn', 'uid', 'mail', 'dn'] },
+      (err, ldapRes) => {
+        if (err) {
+          console.error('Erreur de recherche LDAP :', err);
+          // En cas d'erreur, retourner une liste d'utilisateurs par défaut
+          return res.json([
+            { uid: 'jules', name: 'Jules', role: 'Admin', email: 'jules.maisonnave@gmail.com' },
+            { uid: 'cynthia', name: 'Cynthia', role: 'User', email: 'cynthia@example.com' },
+            { uid: 'test', name: 'Test', role: 'User', email: 'test@gmail.com' }
+          ]);
+        }
+
+        ldapRes.on('searchEntry', (entry) => {
+          try {
+            // Extraire les attributs de l'entrée
+            const attrs = {};
+            entry.pojo.attributes.forEach(attr => {
+              attrs[attr.type] = attr.values[0];
+            });
+            
+            const dn = entry.pojo.objectName;
+            const cn = attrs.cn || 'Nom inconnu';
+            const uid = attrs.uid || attrs.cn || 'UID inconnu';
+            const mail = attrs.mail || `${uid}@example.com`;
+
+            // Exclure l'utilisateur `read-only`
+            if (uid !== 'read-only') {
+              ldapUsers.push({ 
+                uid, 
+                name: cn, 
+                email: mail,
+                // Simplification pour la page de connexion
+                role: uid === 'jules' ? 'Admin' : 'User'
+              });
+            }
+          } catch (err) {
+            console.error('Erreur lors du traitement de l\'entrée LDAP :', err);
+          }
+        });
+
+        ldapRes.on('end', () => {
+          console.log('Recherche utilisateur terminée pour la liste publique');
+          console.log('Utilisateurs trouvés:', ldapUsers.length);
+          
+          // Si aucun utilisateur n'a été trouvé, renvoyer une liste par défaut
+          if (ldapUsers.length === 0) {
+            console.log('Aucun utilisateur trouvé, utilisation de la liste par défaut');
+            return res.json([
+              { uid: 'jules', name: 'Jules', role: 'Admin', email: 'jules.maisonnave@gmail.com' },
+              { uid: 'cynthia', name: 'Cynthia', role: 'User', email: 'cynthia@example.com' },
+              { uid: 'test', name: 'Test', role: 'User', email: 'test@gmail.com' }
+            ]);
+          }
+          
+          res.json(ldapUsers);
+          ldapClient.unbind();
+        });
+      }
+    );
+  });
+});
+
+// Endpoint pour renouveler le token JWT
+app.post('/api/refresh-token', async (req, res) => {
+  const { token } = req.body;
+  
+  if (!token) {
+    return res.status(400).json({ error: 'Token requis' });
+  }
+  
+  try {
+    // Vérifier le token
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    // Générer un nouveau token
+    const newToken = jwt.sign(
+      {
+        uid: decoded.uid,
+        name: decoded.name,
+        email: decoded.email,
+        role: decoded.role
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    return res.json({
+      token: newToken,
+      expiresIn: 86400, // 24h en secondes
+      user: {
+        uid: decoded.uid,
+        name: decoded.name,
+        email: decoded.email,
+        role: decoded.role
+      }
+    });
+  } catch (error) {
+    console.error('Erreur lors du renouvellement du token:', error);
+    return res.status(401).json({ error: 'Token invalide ou expiré' });
   }
 });
 
@@ -1013,8 +1262,9 @@ async function startServer() {
     activeContainers = await initializeActiveContainers();
     console.log('Liste initialisée des conteneurs actifs :', activeContainers);
 
-    httpServer.listen(3002, () => {
-      console.log(`HTTP Server running on http://${getLocalIP()}:3002`);
+    const PORT = process.env.PORT || 3002;
+    httpServer.listen(PORT, () => {
+      console.log(`HTTP Server running on http://${getLocalIP()}:${PORT}`);
     });
   } catch (err) {
     console.error('Erreur lors de l\'initialisation du serveur :', err);
