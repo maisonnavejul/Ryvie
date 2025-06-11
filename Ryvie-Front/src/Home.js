@@ -225,7 +225,7 @@ const Home = () => {
   const [zones, setZones] = useState(() => {
     // Essayer de récupérer les zones depuis localStorage
     const savedZones = localStorage.getItem('iconZones');
-    if (!savedZones) {
+    if (savedZones) {
       try {
         return JSON.parse(savedZones);
       } catch (error) {
