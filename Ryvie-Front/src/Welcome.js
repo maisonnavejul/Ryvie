@@ -34,12 +34,31 @@ const Welcome = () => {
   // Retrieve the user from localStorage as fallback
   useEffect(() => {
     const storedUser = localStorage.getItem('currentUser');
+    const token = localStorage.getItem('jwt_token');
+    console.log('Welcome - Stored user and token:', { storedUser, hasToken: !!token });
+    
     if (storedUser) {
       setCurrentUser(storedUser);
     }
+
+    // S'assurer que le token JWT est configuré dans axios pour toutes les requêtes
+    if (token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      console.log('Welcome - Token JWT configuré dans les en-têtes axios');
+    }
+
+    // Écouter les changements de localStorage (pour les fenêtres multiples)
+    const handleStorageChange = (e) => {
+      if (e.key === 'currentUser' && e.newValue) {
+        console.log('Changement d\'utilisateur détecté:', e.newValue);
+        setCurrentUser(e.newValue);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // Effet pour récupérer l'utilisateur actuel depuis localStorage
   useEffect(() => {
     
     // Vérifier s'il y a un utilisateur dans localStorage
@@ -77,15 +96,25 @@ const Welcome = () => {
       window.electronAPI.onRyvieIP(handleServerIP);
 
       // Demander l'IP initiale du serveur (au cas où elle a été détectée avant le chargement de ce composant)
-      window.electronAPI.requestInitialServerIP().then(ip => {
-        if (ip) {
-          console.log(`IP initiale récupérée : ${ip}`);
-          setServerIP(ip);
-          setLoading(false);
+      const checkInitialIP = async () => {
+        try {
+          const ip = await window.electronAPI.requestInitialServerIP();
+          if (ip) {
+            console.log(`IP initiale récupérée : ${ip}`);
+            setServerIP(ip);
+            setLoading(false);
+          } else {
+            // Si aucune IP n'est encore disponible, réessayer après un délai
+            console.log('Aucune IP initiale disponible, nouvelle tentative dans 1 seconde...');
+            setTimeout(checkInitialIP, 1000);
+          }
+        } catch (err) {
+          console.error('Erreur lors de la récupération de l\'IP initiale:', err);
         }
-      }).catch(err => {
-        console.error('Erreur lors de la récupération de l\'IP initiale:', err);
-      });
+      };
+      
+      // Lancer la vérification initiale avec des tentatives répétées
+      checkInitialIP();
 
       // Nettoyage de l'effet
       return () => {

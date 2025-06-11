@@ -34,7 +34,7 @@ const APPS_CONFIG = {
     urlKey: 'RCLOUD',
     showStatus: true,
     isTaskbarApp: false,
-    containerName: 'Cloud',
+    containerName: 'app-rcloud',
   },
   'Drive.png': {
     name: 'Drive',
@@ -47,7 +47,7 @@ const APPS_CONFIG = {
     urlKey: 'PORTAINER',
     showStatus: true,
     isTaskbarApp: false,
-    containerName: 'Portainer',
+    containerName: 'app-portainer',
   },
   'Outline.png': {
     name: 'Outline',
@@ -61,7 +61,7 @@ const APPS_CONFIG = {
     urlKey: 'RTRANSFER',
     showStatus: true,
     isTaskbarApp: false,
-    containerName: 'ryvie-rtransfer-pingvin-share-1',
+    containerName: 'app-rtransfer',
     useDirectWindow: true,
   },
   'rDrop.png': {
@@ -69,14 +69,14 @@ const APPS_CONFIG = {
     urlKey: 'RDROP',
     showStatus: true,
     isTaskbarApp: false,
-    containerName: 'snapdrop-nginx-1',
+    containerName: 'app-rdrop-nginx',
   },
   'rPictures.svg': {
     name: 'rPictures',
     urlKey: 'RPictures',
     showStatus: true,
     isTaskbarApp: false,
-    containerName: 'immich_server',
+    containerName: 'app-rpictures-server',
   },
   'user.svg': {
     name: 'User',
@@ -90,7 +90,7 @@ const APPS_CONFIG = {
     urlKey: '',
     showStatus: false,
     isTaskbarApp: true,
-    route: '/login',
+    route: '/userlogin',
   },
     'settings.svg': {
     name: 'Settings',

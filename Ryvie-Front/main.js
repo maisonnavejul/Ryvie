@@ -26,10 +26,12 @@ const userSessions = new Map();
 
 // Configuration du dossier de téléchargement par défaut
 app.on('ready', () => {
-  downloadPath = path.join(app.getPath('downloads'), 'Ryvie-rDrop');
-  if (!fs.existsSync(downloadPath)) {
-    fs.mkdirSync(downloadPath, { recursive: true });
-  }
+  // Obtenir la date du jour formatée
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  
+  // Définir le chemin sans créer le dossier immédiatement
+  downloadPath = path.join(app.getPath('downloads'), `Ryvie-rDrop-${dateStr}`);
   app.setPath('downloads', downloadPath);
 });
 
@@ -40,10 +42,11 @@ ipcMain.handle('change-download-folder', async () => {
   });
 
   if (!result.canceled && result.filePaths.length > 0) {
-    downloadPath = path.join(result.filePaths[0], 'Ryvie-rDrop');
-    if (!fs.existsSync(downloadPath)) {
-      fs.mkdirSync(downloadPath, { recursive: true });
-    }
+    // Obtenir la date du jour formatée
+    const today = new Date();
+    const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    
+    downloadPath = path.join(result.filePaths[0], `Ryvie-rDrop-${dateStr}`);
     app.setPath('downloads', downloadPath);
     return downloadPath;
   }
@@ -64,6 +67,12 @@ ipcMain.on('file-received', (event) => {
 });
 
 function createWindowForUser(userId, accessMode, userRole) {
+  console.log("=== INFORMATIONS UTILISATEUR CONNECTÉ ===");
+  console.log("Utilisateur connecté:", userId);
+  console.log("Rôle de l'utilisateur:", userRole);
+  console.log("Mode d'accès:", accessMode);
+  console.log("========================================");
+
   const userSession = session.fromPartition(`persist:${userId}-${accessMode}-${userRole}`);
   console.log(`Création de la fenêtre pour l'utilisateur: ${userId} avec le mode ${accessMode} et le rôle ${userRole}`);
 
@@ -126,29 +135,92 @@ function createWindowForUser(userId, accessMode, userRole) {
     return { action: 'deny' };
   });
 
+  // Ajouter un événement pour transmettre les informations d'authentification
+  window.webContents.on('did-finish-load', () => {
+    const token = global.authToken;
+    const currentUser = global.currentUser;
+    const currentUserRole = global.currentUserRole;
+    
+    // Transmettre l'authentification si les informations sont disponibles
+    if (token && currentUser && userId === currentUser) {
+      window.webContents.send('set-auth-token', {
+        token,
+        userId: currentUser,
+        userRole: currentUserRole
+      });
+      
+      // Effacer les variables globales après transmission
+      global.authToken = null;
+      global.currentUser = null;
+      global.currentUserRole = null;
+    }
+    
+    // Transmettre l'utilisateur actuel
+    window.webContents.send('set-current-user', userId);
+    window.webContents.send('set-user-role', userRole);
+    
+    // Stocker les informations dans localStorage via le processus de rendu
+    window.webContents.executeJavaScript(`
+      localStorage.setItem('currentUser', '${userId}');
+      localStorage.setItem('currentUserRole', '${userRole}');
+      console.log('Informations utilisateur stockées dans localStorage:', '${userId}', '${userRole}');
+    `);
+  });
+  
   window.loadURL(process.env.NODE_ENV === 'development'
     ? 'http://localhost:3000'
     : `file://${path.join(__dirname, 'dist/index.html')}`);
-
-  // Pass the user ID to the renderer process once the window is loaded
-  window.webContents.on('did-finish-load', () => {
-    window.webContents.send('set-current-user', userId);
-  });
 
   userWindows.set(`${userId}-${accessMode}-${userRole}`, window);
   return window;
 }
 
 // Add a new IPC handler to create windows with specific access mode
-ipcMain.handle('create-user-window-with-mode', async (event, userId, accessMode, userRole) => {
+ipcMain.handle('create-user-window-with-mode', async (event, userId, accessMode, userRole, token) => {
   if (userWindows.has(`${userId}-${accessMode}-${userRole}`)) {
     const existingWindow = userWindows.get(`${userId}-${accessMode}-${userRole}`);
     if (!existingWindow.isDestroyed()) {
       existingWindow.focus();
       return;
     }
+    userWindows.delete(`${userId}-${accessMode}-${userRole}`);
   }
-  createWindowForUser(userId, accessMode, userRole);
+
+  // Store access mode globally
+  global.accessMode = accessMode;
+  console.log(`Mode d'accès défini : ${accessMode}`);
+
+  // Create a new window for the user
+  const window = createWindowForUser(userId, accessMode, userRole);
+  
+  // Store the token for transfer to the new window
+  if (token) {
+    global.authToken = token;
+    global.currentUser = userId;
+    global.currentUserRole = userRole;
+  }
+  
+  // Add the window to the map
+  userWindows.set(`${userId}-${accessMode}-${userRole}`, window);
+  
+  // Close the login window after creating the new window successfully
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  if (senderWindow && !senderWindow.isDestroyed()) {
+    // Petit délai pour s'assurer que la nouvelle fenêtre est bien chargée
+    setTimeout(() => {
+      senderWindow.close();
+    }, 1000);
+  }
+  
+  return true;
+});
+
+// Ajouter un gestionnaire IPC pour fermer la fenêtre actuelle
+ipcMain.handle('close-current-window', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (window && !window.isDestroyed()) {
+    window.close();
+  }
   return true;
 });
 
@@ -206,10 +278,6 @@ ipcMain.handle('update-session-partition', async (event, userId, accessMode, use
     return false;
   }
   
-  // Update the session partition for the current window
-  // Note: We can't actually change the partition of an existing window,
-  // but we can update our internal mapping to ensure future operations use the correct partition
-  
   // Remove the old mapping (if any)
   for (const [key, window] of userWindows.entries()) {
     if (window === senderWindow) {
@@ -247,7 +315,8 @@ function startUdpBackend() {
   const udpServerPath = path.join(__dirname, 'udpServer.js');
   
   // Récupérer le mode d'accès depuis le localStorage
-  const accessMode = global.accessMode || 'private';
+  //const accessMode = global.accessMode || 'private';
+  const accessMode = 'private';
   console.log(`Démarrage du processus UDP avec le mode d'accès: ${accessMode}`);
   
   // Passer le mode d'accès comme argument au processus
@@ -314,51 +383,48 @@ ipcMain.on('update-access-mode', (event, mode) => {
   }
 });
 
-// Initialize the default user with role from LDAP
-async function initializeDefaultUser() {
-  try {
-    // Default user ID
-    const defaultUserId = 'jules';
-    
-    // Try to fetch users to get the role for the default user
-    try {
-      const users = await fetchUsers('private');
-      console.log('Fetched users for initialization:', users.length);
-      
-      // Look for jules in the users
-      const defaultUser = users.find(user => 
-        user.id === defaultUserId || 
-        user.name === defaultUserId || 
-        user.id.toLowerCase() === defaultUserId || 
-        user.name.toLowerCase() === defaultUserId
-      );
-      
-      if (defaultUser) {
-        console.log(`Default user found: ${defaultUser.name} with role ${defaultUser.role}`);
-        // Create window for the default user with their role
-        createWindowForUser(defaultUser.id, 'private', defaultUser.role);
-      } else {
-        console.log(`Default user "${defaultUserId}" not found in LDAP, using as is`);
-        //createWindowForUser(defaultUserId);
-      }
-    } catch (error) {
-      console.error('Error fetching users for initialization:', error);
-      //createWindowForUser(defaultUserId);
-    }
-    
-    // Start the UDP backend
-    startUdpBackend();
-  } catch (error) {
-    console.error('Error initializing default user:', error);
-    // Fallback to just using 'jules' without role information
-    //createWindowForUser('jules');
-    startUdpBackend();
+// Function to create login window
+function createLoginWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 720,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+      enableRemoteModule: true,
+      webSecurity: false
+    },
+    autoHideMenuBar: true, // Cache automatiquement la barre de menu ( enlever si besoin)
+    frame: true,
+  });
+
+  // Load the login page
+  const startUrl = process.env.ELECTRON_START_URL || 'http://localhost:3000/#/login';
+  mainWindow.loadURL(startUrl);
+  
+  // Open the DevTools in development mode
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.webContents.openDevTools();
   }
+  
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
+  console.log('Fenêtre de login créée avec succès');
 }
 
 app.whenReady().then(() => {
-  // Initialize the default user
-  initializeDefaultUser();
+  // Nous n'initialisons plus automatiquement un utilisateur par défaut
+  // car nous utilisons maintenant la page de connexion
+  // initializeDefaultUser();
+  
+  // Créer une fenêtre de connexion au démarrage
+  createLoginWindow();
+  
+  // Démarrer uniquement le backend UDP
+  startUdpBackend();
 });
 
 app.on('window-all-closed', () => {
@@ -369,6 +435,16 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     // Initialize the default user
-    initializeDefaultUser();
+    //initializeDefaultUser();
   }
+});
+
+// Assurer que le dossier de téléchargement existe avant un téléchargement
+app.on('session-created', (session) => {
+  session.on('will-download', (event, item) => {
+    // Créer le dossier de téléchargement uniquement quand un téléchargement démarre
+    if (!fs.existsSync(downloadPath)) {
+      fs.mkdirSync(downloadPath, { recursive: true });
+    }
+  });
 });

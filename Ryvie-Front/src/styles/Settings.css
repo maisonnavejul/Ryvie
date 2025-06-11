@@ -64,6 +64,11 @@
   color: #000000;
 }
 
+.settings-section h2 i {
+  margin-right: 10px;
+  color: #1976d2;
+}
+
 /* Grille des statistiques */
 .stats-grid {
   display: grid;
@@ -633,117 +638,435 @@ select:disabled {
 /* Gestion des disques */
 .disks-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 20px;
-  margin-top: 20px;
+  margin-bottom: 24px;
 }
 
 .disk-card {
-  background: white;
+  background-color: white;
   border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: all 0.2s ease;
+  border: 1px solid #e9ecef;
+  margin-bottom: 15px;
+}
+
+.disk-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.disk-card.mounted {
+  border-left: 4px solid #1976d2;
+}
+
+.disk-card.unmounted {
+  border-left: 4px solid #6c757d;
+}
+
+.disk-icon {
+  width: 60px;
+  height: 60px;
+  background-color: #f1f3f5;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-right: 16px;
+  flex-shrink: 0;
+}
+
+.disk-icon i {
+  font-size: 24px;
+  color: #495057;
+}
+
+.disk-card.mounted .disk-icon {
+  background-color: rgba(25, 118, 210, 0.1);
+}
+
+.disk-card.mounted .disk-icon i {
+  color: #1976d2;
+}
+
+.disk-card.unmounted .disk-icon {
+  background-color: rgba(108, 117, 125, 0.1);
+}
+
+.disk-card.unmounted .disk-icon i {
+  color: #6c757d;
+}
+
+.disk-info {
+  flex: 1;
+}
+
+.disk-info h4 {
+  margin: 0 0 10px 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #212529;
+}
+
+.disk-details {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.disk-info-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.disk-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+  border-bottom: 1px solid #f1f3f5;
+  padding-bottom: 5px;
+}
+
+.disk-info-row span {
+  color: #6c757d;
+}
+
+.disk-info-row strong {
+  font-weight: 600;
+  color: #212529;
 }
 
 .disk-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
+  align-items: flex-start;
+  margin-bottom: 15px;
 }
 
-.disk-header h4 {
-  margin: 0;
-  font-size: 1rem;
-  color: #1a1a1a;
+.disk-name-with-status {
+  display: flex;
+  align-items: flex-start;
 }
 
-.health-indicator {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-}
-
-.health-indicator.good {
-  background: #10B981;
-}
-
-.health-indicator.warning {
-  background: #F59E0B;
-}
-
-.health-indicator.critical {
-  background: #EF4444;
-}
-
-.disk-info {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.disk-stat {
+.disk-title-area {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  margin-left: 12px;
 }
 
-.disk-stat span {
+.disk-title-area h4 {
+  margin: 0 0 8px 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.disk-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  align-self: flex-start;
+}
+
+.disk-status-badge.mounted {
+  background-color: rgba(25, 118, 210, 0.12);
+  color: #1976d2;
+  border: 1px solid rgba(25, 118, 210, 0.3);
+}
+
+.disk-status-badge.unmounted {
+  background-color: rgba(108, 117, 125, 0.12);
+  color: #6c757d;
+  border: 1px solid rgba(108, 117, 125, 0.3);
+}
+
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+
+.disk-status-badge.mounted .status-dot {
+  background-color: #1976d2;
+  box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.2);
+}
+
+.disk-status-badge.unmounted .status-dot {
+  background-color: #6c757d;
+  box-shadow: 0 0 0 2px rgba(108, 117, 125, 0.2);
+}
+
+.disk-usage-bar-container {
+  margin-top: 10px;
+}
+
+.disk-usage-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+}
+
+.disk-usage-label span {
   font-size: 0.85rem;
-  color: #64748b;
+  color: #6c757d;
 }
 
-.disk-stat strong {
-  font-size: 1rem;
-  color: #1a1a1a;
+.disk-usage-label strong {
+  font-size: 0.9rem;
+  color: #1976d2;
+  font-weight: 600;
 }
 
-.disk-stat strong.active {
-  color: #10B981;
+.disk-usage-bar {
+  height: 10px;
+  background-color: #e9ecef;
+  border-radius: 5px;
+  overflow: hidden;
 }
 
-.disk-stat strong.inactive {
-  color: #EF4444;
+.disk-usage-fill {
+  height: 100%;
+  background-color: #1976d2;
+  border-radius: 5px;
 }
 
-.disk-usage {
-  margin-top: 12px;
+.mount-disk-button {
+  padding: 8px 16px;
+  background-color: #e9ecef;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  color: #495057;
+  margin-top: 10px;
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-  .apps-grid,
-  .storage-options,
-  .disks-grid {
-    grid-template-columns: 1fr;
-  }
+.mount-disk-button:hover {
+  background-color: #1976d2;
+  color: white;
+}
 
-  .app-controls {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
+.disk-total-card {
+  background-color: #f8f9fa;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  margin-top: 20px;
+  border-left: 4px solid #1976d2;
+}
 
-  .action-btn {
-    width: 100%;
-  }
+.disk-total-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 15px;
+}
 
-  .server-item {
-    flex-direction: column;
-    gap: 8px;
-    text-align: center;
-  }
+.disk-total-icon {
+  font-size: 1.5rem;
+  color: #1976d2;
+  margin-right: 12px;
+}
 
-  .server-status {
-    justify-content: center;
+.disk-total-header h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #1976d2;
+}
+
+.disk-total-content {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.disk-usage-bar-container.total .disk-usage-bar {
+  height: 12px;
+}
+
+/* Modal Détails des Disques */
+.disks-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.disks-modal {
+  background-color: white;
+  border-radius: 12px;
+  width: 80%;
+  max-width: 900px;
+  max-height: 90vh;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  animation: zoomIn 0.3s ease-out;
+}
+
+@keyframes zoomIn {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
   }
 }
 
-@media (max-width: 480px) {
-  .disk-info {
-    grid-template-columns: 1fr;
-  }
+.disks-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.disks-modal-header h3 {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #212529;
+}
+
+.close-modal-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  color: #6c757d;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.close-modal-btn:hover {
+  background-color: #e9ecef;
+  color: #343a40;
+}
+
+.disks-modal-content {
+  padding: 16px 24px;
+  overflow-y: auto;
+}
+
+.disks-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.disks-table th,
+.disks-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.disks-table th {
+  background-color: #f1f3f5;
+  font-weight: 600;
+  color: #495057;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  letter-spacing: 0.5px;
+}
+
+.disks-table tbody tr:hover {
+  background-color: rgba(0, 123, 255, 0.05);
+}
+
+.disk-row.mounted {
+  background-color: rgba(25, 118, 210, 0.05);
+}
+
+.disk-row.unmounted {
+  background-color: rgba(108, 117, 125, 0.05);
+}
+
+.mount-status {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.mount-status.mounted {
+  background-color: rgba(25, 118, 210, 0.2);
+  color: #1976d2;
+}
+
+.mount-status.unmounted {
+  background-color: rgba(108, 117, 125, 0.2);
+  color: #6c757d;
+}
+
+.total-row {
+  font-weight: 700;
+  background-color: #e9ecef;
+}
+
+.total-row td:first-child {
+  color: #495057;
+}
+
+/* Ajout d'un style pour indiquer que la carte storage est cliquable */
+.stat-card.storage {
+  position: relative;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.stat-card.storage:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.08);
+}
+
+.stat-card.storage:hover:after {
+  content: "Cliquer pour voir les détails";
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  opacity: 0.8;
 }
 
 /* Bouton de configuration du dossier de téléchargement */
@@ -836,4 +1159,468 @@ select:disabled {
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(-5px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .apps-grid,
+  .storage-options,
+  .disks-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .app-controls {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .action-btn {
+    width: 100%;
+  }
+
+  .server-item {
+    flex-direction: column;
+    gap: 8px;
+    text-align: center;
+  }
+
+  .server-status {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .disk-info {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Styles pour la section Applications */
+.docker-apps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.docker-app-card {
+  background-color: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+}
+
+.docker-app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.docker-app-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.docker-status-badge {
+  padding: 5px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.docker-status-badge.running {
+  background-color: #e5f7ee;
+  color: #0d9b5c;
+}
+
+.docker-status-badge.stopped {
+  background-color: #f7e5e5;
+  color: #d13438;
+}
+
+.docker-app-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.docker-action-btn {
+  padding: 8px 15px;
+  border: none;
+  border-radius: 4px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.docker-action-btn.start {
+  background-color: #0d9b5c;
+  color: white;
+}
+
+.docker-action-btn.start:hover {
+  background-color: #088d50;
+}
+
+.docker-action-btn.stop {
+  background-color: #d13438;
+  color: white;
+}
+
+.docker-action-btn.stop:hover {
+  background-color: #c42c30;
+}
+
+.docker-action-btn.restart {
+  background-color: #0078d4;
+  color: white;
+}
+
+.docker-action-btn.restart:hover {
+  background-color: #006cbe;
+}
+
+.docker-action-btn:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.docker-autostart-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.docker-autostart-label {
+  font-size: 14px;
+  color: #666;
+}
+
+.docker-action-status {
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  margin: 8px 0;
+}
+
+.docker-action-status.success {
+  background-color: #e5f7ee;
+  color: #0d9b5c;
+}
+
+.docker-action-status.error {
+  background-color: #f7e5e5;
+  color: #d13438;
+}
+
+.docker-loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 30px;
+}
+
+.docker-loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(0, 120, 212, 0.2);
+  border-radius: 50%;
+  border-top-color: #0078d4;
+  animation: docker-spin 1s linear infinite;
+  margin-bottom: 15px;
+}
+
+@keyframes docker-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.docker-error-container {
+  padding: 20px;
+  background-color: #f7e5e5;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.docker-error-message {
+  color: #d13438;
+  margin-bottom: 15px;
+  text-align: center;
+}
+
+.docker-retry-button {
+  background-color: #0078d4;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 15px;
+  cursor: pointer;
+}
+
+.docker-empty-state {
+  padding: 30px;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+}
+
+/* Styles pour le modal de détails d'application Docker */
+.docker-app-details-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.docker-app-details-content {
+  background-color: white;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 800px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+}
+
+.docker-app-details-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 20px;
+  border-bottom: 1px solid #eee;
+}
+
+.docker-app-details-header h3 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.docker-close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #666;
+}
+
+.docker-close-btn:hover {
+  color: #333;
+}
+
+.docker-app-details-body {
+  padding: 20px;
+}
+
+.docker-app-status-info {
+  margin-bottom: 20px;
+}
+
+.docker-app-status {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.docker-status-icon {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.docker-app-status.running .docker-status-icon {
+  background-color: #0d9b5c;
+}
+
+.docker-app-status.stopped .docker-status-icon {
+  background-color: #d13438;
+}
+
+.docker-status-text {
+  font-weight: 500;
+}
+
+.docker-app-status.running .docker-status-text {
+  color: #0d9b5c;
+}
+
+.docker-app-status.stopped .docker-status-text {
+  color: #d13438;
+}
+
+.docker-app-progress {
+  margin-top: 15px;
+}
+
+.docker-progress-bar {
+  height: 8px;
+  background-color: #e9ecef;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 5px;
+}
+
+.docker-progress-fill {
+  height: 100%;
+  background-color: #0078d4;
+  border-radius: 4px;
+}
+
+.docker-progress-text {
+  font-size: 14px;
+  color: #555;
+}
+
+.docker-app-info-section {
+  margin-bottom: 20px;
+}
+
+.docker-app-info-section h4 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.docker-ports-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.docker-port-tag {
+  background-color: #e9ecef;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #333;
+}
+
+.docker-containers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.docker-container-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px;
+  background-color: #f5f5f5;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.docker-container-name {
+  font-weight: 500;
+}
+
+.docker-container-status {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.docker-container-status.running {
+  background-color: #e5f7ee;
+  color: #0d9b5c;
+}
+
+.docker-container-status.exited, 
+.docker-container-status.stopped {
+  background-color: #f7e5e5;
+  color: #d13438;
+}
+
+.docker-app-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.docker-action-btn-large {
+  padding: 12px 20px;
+  border: none;
+  border-radius: 4px;
+  font-weight: 500;
+  cursor: pointer;
+  font-size: 16px;
+  transition: background-color 0.2s ease;
+}
+
+.docker-action-btn-large.start {
+  background-color: #0d9b5c;
+  color: white;
+}
+
+.docker-action-btn-large.start:hover {
+  background-color: #088d50;
+}
+
+.docker-action-btn-large.stop {
+  background-color: #d13438;
+  color: white;
+}
+
+.docker-action-btn-large.stop:hover {
+  background-color: #c42c30;
+}
+
+.docker-action-btn-large.restart {
+  background-color: #0078d4;
+  color: white;
+}
+
+.docker-action-btn-large.restart:hover {
+  background-color: #006cbe;
+}
+
+.docker-action-btn-large:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+/* Style pour la carte d'application active */
+.docker-app-card {
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.docker-app-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+}
+
+.docker-app-card.active {
+  border: 2px solid #0078d4;
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .docker-app-details-content {
+    width: 95%;
+    max-height: 95vh;
+  }
+  
+  .docker-app-actions {
+    flex-direction: column;
+  }
 }

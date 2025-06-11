@@ -537,3 +537,158 @@ html, body {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
   animation: slideInFromBottom 0.6s ease-in-out;
 }
+
+/* Notification messages */
+.notification-message {
+  margin: 16px 0;
+  padding: 12px 20px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  animation: slideInFromTop 0.4s ease-in-out;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.error-message {
+  background-color: #fee2e2;
+  border-left: 4px solid #ef4444;
+  color: #b91c1c;
+}
+
+.success-message {
+  background-color: #dcfce7;
+  border-left: 4px solid #22c55e;
+  color: #15803d;
+}
+
+.notification-message p {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.close-notification {
+  background: transparent;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.close-notification:hover {
+  opacity: 1;
+}
+
+/* Admin authentication modal */
+.admin-auth-modal {
+  max-width: 450px;
+}
+
+.admin-auth-modal .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-auth-modal .modal-body p {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: #4a5568;
+  text-align: center;
+}
+
+/* Style pour le message d'erreur dans le modal */
+.modal-error-message {
+  background-color: #fee2e2;
+  border-left: 4px solid #ef4444;
+  color: #b91c1c;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  animation: shake 0.5s ease-in-out;
+}
+
+.modal-error-message p {
+  margin: 0 !important;
+  color: #b91c1c !important;
+  font-weight: 500 !important;
+  text-align: left !important;
+  font-size: 0.9rem !important;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+  20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+
+.admin-auth-modal input {
+  padding: 12px 16px;
+  border: 2px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  transition: border-color 0.3s ease;
+}
+
+.admin-auth-modal input:focus {
+  border-color: #3b82f6;
+  outline: none;
+}
+
+.admin-auth-modal input:disabled {
+  background-color: #f3f4f6;
+  cursor: not-allowed;
+}
+
+.admin-auth-buttons {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.admin-auth-buttons button {
+  flex: 1;
+  padding: 12px;
+  border-radius: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.admin-auth-buttons .cancel-btn {
+  background-color: #f3f4f6;
+  color: #4b5563;
+  border: 1px solid #e5e7eb;
+}
+
+.admin-auth-buttons .cancel-btn:hover:not(:disabled) {
+  background-color: #e5e7eb;
+}
+
+.admin-auth-buttons .submit-btn {
+  background: linear-gradient(135deg, #a2beff 0%, #2b47ff 100%);
+  color: white;
+  border: none;
+}
+
+.admin-auth-buttons .submit-btn:hover:not(:disabled) {
+  box-shadow: 0 4px 12px rgba(43, 71, 255, 0.25);
+  transform: translateY(-2px);
+}
+
+.admin-auth-buttons .submit-btn.delete-btn {
+  background: linear-gradient(135deg, #ff6b6b 0%, #cc0000 100%);
+}
+
+.admin-auth-buttons .submit-btn.delete-btn:hover:not(:disabled) {
+  box-shadow: 0 4px 12px rgba(204, 0, 0, 0.25);
+  transform: translateY(-2px);
+}
+
+.admin-auth-buttons button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}

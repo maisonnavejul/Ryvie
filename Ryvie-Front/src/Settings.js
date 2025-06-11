@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import './styles/Settings.css';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faServer, faHdd, faDatabase, faPlug } from '@fortawesome/free-solid-svg-icons';
+import io from 'socket.io-client'; // Importer la bibliothèque Socket.IO
 const { getServerUrl } = require('./config/urls');
 
 const Settings = () => {
@@ -34,29 +37,18 @@ const Settings = () => {
     downloadPath: '',
   });
 
-  const [applications, setApplications] = useState([
-    {
-      id: 1,
-      name: 'Serveur Web',
-      status: 'running',
-      port: 80,
-      autostart: true,
-    },
-    {
-      id: 2,
-      name: 'Base de données',
-      status: 'running',
-      port: 3306,
-      autostart: true,
-    },
-    {
-      id: 3,
-      name: 'Serveur FTP',
-      status: 'stopped',
-      port: 21,
-      autostart: false,
-    },
-  ]);
+  // État pour les applications Docker
+  const [applications, setApplications] = useState([]);
+  const [appsLoading, setAppsLoading] = useState(true);
+  const [appsError, setAppsError] = useState(null);
+  const [appActionStatus, setAppActionStatus] = useState({
+    show: false,
+    success: false,
+    message: '',
+    appId: null
+  });
+  // État pour l'application sélectionnée (détails)
+  const [selectedApp, setSelectedApp] = useState(null);
 
   const [disks, setDisks] = useState([
     {
@@ -105,6 +97,11 @@ const Settings = () => {
 
   const [changeStatus, setChangeStatus] = useState({ show: false, success: false });
   const [accessMode, setAccessMode] = useState('private');
+  const [systemDisksInfo, setSystemDisksInfo] = useState(null);
+  const [showDisksInfo, setShowDisksInfo] = useState(false);
+
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [serverConnectionStatus, setServerConnectionStatus] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -246,28 +243,155 @@ const Settings = () => {
     }
   };
 
-  const handleAppAction = (appId, action) => {
-    setApplications(prev => prev.map(app => {
-      if (app.id === appId) {
-        return {
-          ...app,
-          status: action === 'start' ? 'running' : 'stopped'
-        };
-      }
-      return app;
-    }));
+  // Fonction pour récupérer la liste des applications Docker
+  const fetchApplications = async () => {
+    setAppsLoading(true);
+    setAppsError(null);
+    
+    try {
+      const response = await axios.get(`${getServerUrl(accessMode)}/api/apps`);
+      setApplications(response.data.map(app => ({
+        ...app,
+        port: app.ports && app.ports.length > 0 ? app.ports[0] : null,
+        autostart: false // Par défaut, on met à false, à améliorer avec une API de configuration
+      })));
+      setAppsLoading(false);
+    } catch (error) {
+      console.error('Erreur lors de la récupération des applications:', error);
+      setAppsError('Impossible de récupérer la liste des applications');
+      setAppsLoading(false);
+    }
   };
 
-  const handleAppAutostart = (appId, autostart) => {
-    setApplications(prev => prev.map(app => {
-      if (app.id === appId) {
-        return {
-          ...app,
-          autostart
-        };
-      }
-      return app;
-    }));
+  // Fonction pour gérer les actions sur les applications (démarrer/arrêter)
+  const handleAppAction = async (appId, action) => {
+    try {
+      // Mettre à jour l'interface utilisateur pour montrer que l'action est en cours
+      setAppActionStatus({
+        show: true,
+        success: false,
+        message: `Action ${action} en cours...`,
+        appId
+      });
+
+      // Appeler l'API pour effectuer l'action
+      const response = await axios.post(`${getServerUrl(accessMode)}/api/apps/${appId}/${action}`);
+      
+      // Mettre à jour la liste des applications après l'action
+      fetchApplications();
+      
+      // Afficher un message de succès
+      setAppActionStatus({
+        show: true,
+        success: true,
+        message: response.data.message,
+        appId
+      });
+      
+      // Masquer le message après 3 secondes
+      setTimeout(() => {
+        setAppActionStatus({
+          show: false,
+          success: false,
+          message: '',
+          appId: null
+        });
+      }, 3000);
+      
+    } catch (error) {
+      console.error(`Erreur lors de l'action ${action} sur l'application ${appId}:`, error);
+      
+      // Afficher un message d'erreur
+      setAppActionStatus({
+        show: true,
+        success: false,
+        message: error.response?.data?.message || `Erreur lors de l'action ${action}`,
+        appId
+      });
+      
+      // Masquer le message après 5 secondes
+      setTimeout(() => {
+        setAppActionStatus({
+          show: false,
+          success: false,
+          message: '',
+          appId: null
+        });
+      }, 5000);
+    }
+  };
+
+  // Fonction pour gérer le démarrage automatique des applications
+  const handleAppAutostart = async (appId, enabled) => {
+    // Mettre à jour l'état local immédiatement pour une réponse UI rapide
+    setApplications(prevApps => prevApps.map(app => 
+      app.id === appId ? { ...app, autostart: enabled } : app
+    ));
+    
+    try {
+      // Cette partie serait à implémenter côté backend
+      // Pour l'instant on simule juste la mise à jour
+      console.log(`Application ${appId} autostart set to ${enabled}`);
+      
+      // Afficher un message de confirmation
+      setAppActionStatus({
+        show: true,
+        success: true,
+        message: `Démarrage automatique ${enabled ? 'activé' : 'désactivé'}`,
+        appId
+      });
+      
+      // Masquer le message après 3 secondes
+      setTimeout(() => {
+        setAppActionStatus({
+          show: false,
+          success: false,
+          message: '',
+          appId: null
+        });
+      }, 3000);
+    } catch (error) {
+      console.error(`Erreur lors de la mise à jour du démarrage automatique pour ${appId}:`, error);
+      
+      // Annuler le changement local en cas d'erreur
+      setApplications(prevApps => prevApps.map(app => 
+        app.id === appId ? { ...app, autostart: !enabled } : app
+      ));
+      
+      // Afficher un message d'erreur
+      setAppActionStatus({
+        show: true,
+        success: false,
+        message: "Erreur lors de la mise à jour du démarrage automatique",
+        appId
+      });
+      
+      // Masquer le message après 5 secondes
+      setTimeout(() => {
+        setAppActionStatus({
+          show: false,
+          success: false,
+          message: '',
+          appId: null
+        });
+      }, 5000);
+    }
+  };
+
+  // Fonction pour sélectionner une application et afficher ses détails
+  const handleAppSelect = (app) => {
+    if (selectedApp && selectedApp.id === app.id) {
+      // Si on clique sur l'app déjà sélectionnée, on ferme les détails
+      setSelectedApp(null);
+    } else {
+      // Sinon, on affiche les détails de l'app
+      setSelectedApp(app);
+    }
+  };
+
+  // Fonction pour fermer la vue détaillée
+  const closeAppDetails = () => {
+    setSelectedApp(null);
   };
 
   const formatSize = (size) => {
@@ -278,6 +402,54 @@ const Settings = () => {
   const formatPercentage = (used, total) => {
     return ((used / total) * 100).toFixed(1) + '%';
   };
+
+  const handleShowDisks = async () => {
+    const baseUrl = getServerUrl(accessMode);
+    try {
+      const response = await axios.get(`${baseUrl}/api/disks`);
+      setSystemDisksInfo(response.data);
+      setShowDisksInfo(!showDisksInfo);
+    } catch (error) {
+      console.error('Erreur lors de la récupération des informations des disques:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchApplications();
+    
+    // Connexion au websocket pour les mises à jour en temps réel
+    const socket = io(getServerUrl(accessMode));
+    
+    socket.on('connect', () => {
+      console.log('Socket connected');
+      setSocketConnected(true);
+    });
+    
+    socket.on('disconnect', () => {
+      console.log('Socket disconnected');
+      setSocketConnected(false);
+    });
+    
+    // Écouter les mises à jour des statuts d'applications
+    socket.on('apps-status-update', (updatedApps) => {
+      console.log('Received apps update:', updatedApps);
+      setApplications(prevApps => {
+        // Mettre à jour les applications tout en préservant les paramètres autostart
+        return updatedApps.map(updatedApp => {
+          const existingApp = prevApps.find(app => app.id === updatedApp.id);
+          return {
+            ...updatedApp,
+            port: updatedApp.ports && updatedApp.ports.length > 0 ? updatedApp.ports[0] : null,
+            autostart: existingApp ? existingApp.autostart : false
+          };
+        });
+      });
+    });
+    
+    return () => {
+      socket.disconnect();
+    };
+  }, [accessMode]);
 
   if (loading) {
     return (
@@ -303,7 +475,7 @@ const Settings = () => {
         <h2>Vue d'ensemble du système</h2>
         <div className="stats-grid">
           {/* Stockage */}
-          <div className="stat-card storage">
+          <div className="stat-card storage" onClick={handleShowDisks} style={{ cursor: 'pointer' }}>
             <h3>Stockage</h3>
             <div className="progress-container">
               <div 
@@ -374,6 +546,131 @@ const Settings = () => {
           </div>
         </div>
       </section>
+
+      {/* Modal Détails Disques */}
+      {showDisksInfo && systemDisksInfo && (
+        <div className="disks-modal-overlay">
+          <div className="disks-modal">
+            <div className="disks-modal-header">
+              <h3>Détails des disques</h3>
+              <button className="close-modal-btn" onClick={() => setShowDisksInfo(false)}>×</button>
+            </div>
+            <div className="disks-modal-content">
+              <div className="disks-grid">
+                {systemDisksInfo.disks.map((disk, idx) => {
+                  // Calcul du pourcentage d'utilisation
+                  const usedSizeGB = parseFloat(disk.used.replace(' GB', ''));
+                  const totalSizeGB = parseFloat(disk.size.replace(' GB', ''));
+                  const usedPercentage = Math.round((usedSizeGB / totalSizeGB) * 100) || 0;
+                  
+                  return (
+                    <div key={idx} className={`disk-card ${disk.mounted ? 'mounted' : 'unmounted'}`}>
+                      <div className="disk-header">
+                        <div className="disk-name-with-status">
+                          <FontAwesomeIcon icon={faHdd} className={`disk-icon-visual ${disk.mounted ? 'mounted' : 'unmounted'}`} />
+                          <div className="disk-title-area">
+                            <h4>{disk.device}</h4>
+                            <div className={`disk-status-badge ${disk.mounted ? 'mounted' : 'unmounted'}`}>
+                              <span className="status-dot"></span>
+                              {disk.mounted ? 'Monté' : 'Démonté'}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="disk-details">
+                        <div className="disk-info-rows">
+                          <div className="disk-info-row">
+                            <span>Capacité:</span>
+                            <strong>{disk.size}</strong>
+                          </div>
+                          <div className="disk-info-row">
+                            <span>Utilisé:</span>
+                            <strong>{disk.used}</strong>
+                          </div>
+                          <div className="disk-info-row">
+                            <span>Libre:</span>
+                            <strong>{disk.free}</strong>
+                          </div>
+                        </div>
+                        
+                        {disk.mounted ? (
+                          <div className="disk-usage-bar-container">
+                            <div className="disk-usage-label">
+                              <span>Utilisation:</span>
+                              <strong>{usedPercentage}%</strong>
+                            </div>
+                            <div className="disk-usage-bar">
+                              <div 
+                                className="disk-usage-fill" 
+                                style={{ width: `${usedPercentage}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        ) : (
+                          <button 
+                            className="mount-disk-button"
+                            onClick={() => console.log(`Monter le disque ${disk.device}`)}
+                          >
+                            <FontAwesomeIcon icon={faPlug} /> Monter le disque
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              <div className="disk-total-card">
+                <div className="disk-total-header">
+                  <FontAwesomeIcon icon={faDatabase} className="disk-total-icon" />
+                  <h3>Stockage Total</h3>
+                </div>
+                
+                <div className="disk-total-content">
+                  <div className="disk-info-rows">
+                    <div className="disk-info-row">
+                      <span>Capacité:</span>
+                      <strong>{systemDisksInfo.total.size}</strong>
+                    </div>
+                    <div className="disk-info-row">
+                      <span>Utilisé:</span>
+                      <strong>{systemDisksInfo.total.used}</strong>
+                    </div>
+                    <div className="disk-info-row">
+                      <span>Libre:</span>
+                      <strong>{systemDisksInfo.total.free}</strong>
+                    </div>
+                  </div>
+                  
+                  {/* Calcul du pourcentage d'utilisation pour le total */}
+                  {(() => {
+                    const totalUsedGB = parseFloat(systemDisksInfo.total.used.replace(' GB', ''));
+                    const totalSizeGB = parseFloat(systemDisksInfo.total.size.replace(' GB', ''));
+                    const totalUsedPercentage = Math.round((totalUsedGB / totalSizeGB) * 100) || 0;
+                    
+                    return (
+                      <div className="disk-usage-bar-container total">
+                        <div className="disk-usage-label">
+                          <span>Utilisation globale:</span>
+                          <strong>{totalUsedPercentage}%</strong>
+                        </div>
+                        <div className="disk-usage-bar">
+                          <div 
+                            className="disk-usage-fill" 
+                            style={{ width: `${totalUsedPercentage}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Section Téléchargements */}
       <section className="settings-section">
         <h2>Configuration des téléchargements</h2>
@@ -590,38 +887,154 @@ const Settings = () => {
       {/* Section Applications */}
       <section className="settings-section">
         <h2>Gestion des Applications</h2>
-        <div className="apps-grid">
-          {applications.map(app => (
-            <div key={app.id} className="app-card">
-              <div className="app-header">
-                <h3>{app.name}</h3>
-                <span className={`status-badge ${app.status}`}>
-                  {app.status === 'running' ? 'En cours' : 'Arrêté'}
-                </span>
+        
+        {/* Modal pour afficher les détails d'une application */}
+        {selectedApp && (
+          <div className="docker-app-details-modal">
+            <div className="docker-app-details-content">
+              <div className="docker-app-details-header">
+                <h3>{selectedApp.name}</h3>
+                <button className="docker-close-btn" onClick={closeAppDetails}>×</button>
               </div>
-              <div className="app-details">
-                <p>Port: {app.port}</p>
-                <div className="app-controls">
+              <div className="docker-app-details-body">
+                <div className="docker-app-status-info">
+                  <div className={`docker-app-status ${selectedApp.status}`}>
+                    <span className="docker-status-icon"></span>
+                    <span className="docker-status-text">
+                      {selectedApp.status === 'running' ? 'Opérationnel' : 'Arrêté'}
+                    </span>
+                  </div>
+                  <div className="docker-app-progress">
+                    <div className="docker-progress-bar">
+                      <div 
+                        className="docker-progress-fill" 
+                        style={{ width: `${selectedApp.progress}%` }}
+                      ></div>
+                    </div>
+                    <span className="docker-progress-text">{selectedApp.progress}% ({selectedApp.containersRunning})</span>
+                  </div>
+                </div>
+                
+                <div className="docker-app-info-section">
+                  <h4>Ports</h4>
+                  {selectedApp.ports && selectedApp.ports.length > 0 ? (
+                    <div className="docker-ports-list">
+                      {selectedApp.ports.map(port => (
+                        <div key={port} className="docker-port-tag">
+                          {port}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>Aucun port exposé</p>
+                  )}
+                </div>
+                
+                <div className="docker-app-info-section">
+                  <h4>Conteneurs</h4>
+                  <div className="docker-containers-list">
+                    {selectedApp.containers && selectedApp.containers.map(container => (
+                      <div key={container.id} className="docker-container-item">
+                        <div className="docker-container-name">{container.name}</div>
+                        <div className={`docker-container-status ${container.state}`}>
+                          {container.state}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="docker-app-actions">
                   <button
-                    className={`action-btn ${app.status === 'running' ? 'stop' : 'start'}`}
-                    onClick={() => handleAppAction(app.id, app.status === 'running' ? 'stop' : 'start')}
+                    className={`docker-action-btn-large ${selectedApp.status === 'running' ? 'stop' : 'start'}`}
+                    onClick={() => handleAppAction(selectedApp.id, selectedApp.status === 'running' ? 'stop' : 'start')}
                   >
-                    {app.status === 'running' ? 'Arrêter' : 'Démarrer'}
+                    {selectedApp.status === 'running' ? 'Arrêter tous les conteneurs' : 'Démarrer tous les conteneurs'}
                   </button>
-                  <label className="switch">
-                    <input
-                      type="checkbox"
-                      checked={app.autostart}
-                      onChange={(e) => handleAppAutostart(app.id, e.target.checked)}
-                    />
-                    <span className="slider"></span>
-                  </label>
-                  <span className="autostart-label">Démarrage auto</span>
+                  <button
+                    className="docker-action-btn-large restart"
+                    onClick={() => handleAppAction(selectedApp.id, 'restart')}
+                    disabled={selectedApp.status !== 'running'}
+                  >
+                    Redémarrer tous les conteneurs
+                  </button>
                 </div>
               </div>
             </div>
-          ))}
-        </div>
+          </div>
+        )}
+        
+        {appsLoading ? (
+          <div className="docker-loading-container">
+            <div className="docker-loading-spinner"></div>
+            <p>Chargement des applications...</p>
+          </div>
+        ) : appsError ? (
+          <div className="docker-error-container">
+            <p className="docker-error-message">{appsError}</p>
+            <button className="docker-retry-button" onClick={fetchApplications}>Réessayer</button>
+          </div>
+        ) : applications.length === 0 ? (
+          <div className="docker-empty-state">
+            <p>Aucune application Docker détectée.</p>
+          </div>
+        ) : (
+          <div className="docker-apps-grid">
+            {applications.map(app => (
+              <div 
+                key={app.id} 
+                className={`docker-app-card ${selectedApp && selectedApp.id === app.id ? 'active' : ''}`}
+                onClick={() => handleAppSelect(app)}
+              >
+                <div className="docker-app-header">
+                  <h3>{app.name}</h3>
+                  <span className={`docker-status-badge ${app.status}`}>
+                    {app.status === 'running' ? 'En cours' : 'Arrêté'}
+                  </span>
+                </div>
+                
+                {appActionStatus.show && appActionStatus.appId === app.id && (
+                  <div className={`docker-action-status ${appActionStatus.success ? 'success' : 'error'}`}>
+                    {appActionStatus.message}
+                  </div>
+                )}
+                
+                <div className="docker-app-controls">
+                  <button
+                    className={`docker-action-btn ${app.status === 'running' ? 'stop' : 'start'}`}
+                    onClick={(e) => {
+                      e.stopPropagation(); // Empêcher le déclenchement du onClick du parent
+                      handleAppAction(app.id, app.status === 'running' ? 'stop' : 'start')
+                    }}
+                  >
+                    {app.status === 'running' ? 'Arrêter' : 'Démarrer'}
+                  </button>
+                  <button
+                    className="docker-action-btn restart"
+                    onClick={(e) => {
+                      e.stopPropagation(); // Empêcher le déclenchement du onClick du parent
+                      handleAppAction(app.id, 'restart')
+                    }}
+                    disabled={app.status !== 'running'}
+                  >
+                    Redémarrer
+                  </button>
+                  <div className="docker-autostart-control" onClick={(e) => e.stopPropagation()}>
+                    <label className="switch">
+                      <input
+                        type="checkbox"
+                        checked={app.autostart}
+                        onChange={(e) => handleAppAutostart(app.id, e.target.checked)}
+                      />
+                      <span className="slider"></span>
+                    </label>
+                    <span className="docker-autostart-label">Auto</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Section Stockage */}
@@ -681,33 +1094,45 @@ const Settings = () => {
               {disks.map(disk => (
                 <div key={disk.id} className="disk-card">
                   <div className="disk-header">
-                    <h4>{disk.name}</h4>
-                    <span className={`health-indicator ${disk.health}`}></span>
-                  </div>
-                  <div className="disk-info">
-                    <div className="disk-stat">
-                      <span>Capacité</span>
-                      <strong>{disk.size}</strong>
-                    </div>
-                    <div className="disk-stat">
-                      <span>Utilisé</span>
-                      <strong>{disk.used}</strong>
-                    </div>
-                    <div className="disk-stat">
-                      <span>Type</span>
-                      <strong>{disk.type}</strong>
-                    </div>
-                    <div className="disk-stat">
-                      <span>État</span>
-                      <strong className={disk.status}>{disk.status}</strong>
+                    <div className="disk-name-with-status">
+                      <FontAwesomeIcon icon={faHdd} className={`disk-icon-visual ${disk.status}`}/>
+                      <div className="disk-title-area">
+                        <h4>{disk.name}</h4>
+                        <div className={`disk-status-badge ${disk.status}`}>
+                          <span className="status-dot"></span>
+                          {disk.status}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <div className="disk-usage">
-                    <div className="progress-container">
-                      <div 
-                        className="progress-bar"
-                        style={{ width: '40%' }}
-                      ></div>
+                  
+                  <div className="disk-details">
+                    <div className="disk-info-rows">
+                      <div className="disk-info-row">
+                        <span>Capacité:</span>
+                        <strong>{disk.size}</strong>
+                      </div>
+                      <div className="disk-info-row">
+                        <span>Utilisé:</span>
+                        <strong>{disk.used}</strong>
+                      </div>
+                      <div className="disk-info-row">
+                        <span>Libre:</span>
+                        <strong>{disk.free}</strong>
+                      </div>
+                    </div>
+                    
+                    <div className="disk-usage-bar-container">
+                      <div className="disk-usage-label">
+                        <span>Utilisation:</span>
+                        <strong>{((parseFloat(disk.used.replace(' GB', '')) / parseFloat(disk.size.replace(' GB', ''))) * 100).toFixed(1)}%</strong>
+                      </div>
+                      <div className="disk-usage-bar">
+                        <div 
+                          className="disk-usage-fill" 
+                          style={{ width: `${((parseFloat(disk.used.replace(' GB', '')) / parseFloat(disk.size.replace(' GB', ''))) * 100).toFixed(1)}%` }}
+                        ></div>
+                      </div>
                     </div>
                   </div>
                 </div>

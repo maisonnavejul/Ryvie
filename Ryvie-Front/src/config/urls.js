@@ -8,14 +8,14 @@
 const BASE_URLS = {
   // URLs du serveur principal
   SERVER: {
-    PUBLIC: 'http://status.test.jules.ryvie.fr',
+    PUBLIC: 'https://status.makerfaire.jules.ryvie.fr',
     PRIVATE: 'http://ryvie.local:3002'
   },
   
   // URLs des applications
   APPS: {
     APP_STORE: {
-      PUBLIC: 'http://appstore.test.jules.ryvie.fr',
+      PUBLIC: 'https://appstore.makerfaire.jules.ryvie.fr',
       PRIVATE: 'http://ryvie.local:5173'
     },
     RCLOUD: {
@@ -23,23 +23,23 @@ const BASE_URLS = {
       PRIVATE: 'http://ryvie.local:3001'
     },
     PORTAINER: {
-      PUBLIC: 'http://portainer.test.jules.ryvie.fr',
+      PUBLIC: 'https://portainer.test.jules.ryvie.fr',
       PRIVATE: 'http://ryvie.local:9005'
     },
     OUTLINE: {
-      PUBLIC: 'https://192.168.1.34:8443/',
-      PRIVATE: 'https://192.168.1.34:8443/'
+      PUBLIC: 'http://192.168.6.131/#/',
+      PRIVATE: 'http://192.168.6.131/#/'
     },
     RTRANSFER: {
-      PUBLIC: 'http://rtransfer.test.jules.ryvie.fr/auth/signIn',
+      PUBLIC: 'https://rtransfer.makerfaire.jules.ryvie.fr/auth/signIn',
       PRIVATE: 'http://ryvie.local:3000'
     },
     RDROP: {
-      PUBLIC: 'https://rdrop.test.jules.ryvie.fr',
+      PUBLIC: 'https://rdrop.makerfaire.jules.ryvie.fr',
       PRIVATE: 'http://ryvie.local:8080'
     },
     RPictures: {
-      PUBLIC: 'http://rpictures.test.jules.ryvie.fr',
+      PUBLIC: 'https://rpictures.makerfaire.jules.ryvie.fr',
       PRIVATE: 'http://ryvie.local:2283'
     }
   }
