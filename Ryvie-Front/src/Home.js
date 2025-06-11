@@ -23,7 +23,7 @@ const weatherIcons = importAll(require.context('./weather_icons', false, /\.(png
 
 // Configuration centralisée des applications
 const APPS_CONFIG = {
-  'AppStore.jpeg': {
+  'AppStore.svg': {
     name: 'AppStore',
     urlKey: 'APP_STORE',
     showStatus: false,
@@ -225,7 +225,7 @@ const Home = () => {
   const [zones, setZones] = useState(() => {
     // Essayer de récupérer les zones depuis localStorage
     const savedZones = localStorage.getItem('iconZones');
-    if (savedZones) {
+    if (!savedZones) {
       try {
         return JSON.parse(savedZones);
       } catch (error) {
@@ -235,7 +235,7 @@ const Home = () => {
     
     // Valeurs par défaut si rien n'est trouvé dans localStorage
     return {
-      left: ['AppStore.jpeg'],
+      left: ['AppStore.png'],
       right: ['Portainer.png'],
       bottom1: ['rPictures.svg'],
       bottom2: ['rCloud.png'],

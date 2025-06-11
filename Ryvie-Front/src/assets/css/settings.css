@@ -1,0 +1,39 @@
+
+
+/* Indicateurs de chargement pour les infos serveur */
+.server-info-loading {
+  font-size: 0.8em;
+  opacity: 0.6;
+  font-weight: normal;
+  font-style: italic;
+  margin-left: 8px;
+}
+
+.info-refreshing-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 6px;
+  background-color: #4CAF50;
+  animation: pulse 1.2s infinite;
+}
+
+.loading-transition {
+  transition: width 0.8s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.8);
+    opacity: 0.7;
+  }
+}

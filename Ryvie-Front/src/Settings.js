@@ -10,15 +10,17 @@ const { getServerUrl } = require('./config/urls');
 const Settings = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [serverInfoLoading, setServerInfoLoading] = useState(true);
   const [stats, setStats] = useState({
     storageUsed: 0,
-    storageLimit: 0, // Go
+    storageLimit: 1000, // Go - valeur par défaut pour éviter la division par zéro
     cpuUsage: 0,
     ramUsage: 0,
     activeUsers: 1,
     totalFiles: 110,
     backupStatus: 'Completed',
     lastBackup: '2024-01-09 14:30',
+    lastUpdated: null, // Timestamp de la dernière mise à jour réussie
   });
 
   const [settings, setSettings] = useState({
@@ -32,7 +34,7 @@ const Settings = () => {
     bandwidthLimit: 'unlimited',
     autoDelete: false,
     autoDeletionPeriod: '30',
-    storageLocation: 'local',
+    storageLocation: 'hybrid',  // Modifié de 'local' à 'hybrid' comme demandé
     redundancyLevel: 'raid1',
     downloadPath: '',
   });
@@ -122,24 +124,72 @@ const Settings = () => {
     fetchData();
   }, []);
 
-  // Récupération des informations serveur
+  // Récupération des informations serveur avec cache intelligent
   useEffect(() => {
     // Récupère la valeur de accessMode depuis le localStorage
     const storedMode = localStorage.getItem('accessMode') || 'private';
     setAccessMode(storedMode);
     
+    // Essayer de récupérer les infos serveur cachées du localStorage
+    const cachedServerInfo = localStorage.getItem('cachedServerInfo');
+    if (cachedServerInfo) {
+      try {
+        const parsedCache = JSON.parse(cachedServerInfo);
+        // N'utiliser le cache que s'il date de moins de 5 minutes
+        const cacheAge = Date.now() - parsedCache.timestamp;
+        if (cacheAge < 5 * 60 * 1000) { // 5 minutes en millisecondes
+          console.log('Utilisation des données serveur en cache pendant le chargement...');
+          updateServerStats(parsedCache.data);
+          setServerInfoLoading(false);
+        }
+      } catch (e) {
+        console.warn('Cache serveur invalide, ignoré');
+      }
+    }
+    
     // Détermine l'URL du serveur en fonction du mode d'accès
     const baseUrl = getServerUrl(storedMode);
-    console.log("Connexion à :", baseUrl);
+    console.log("Connexion au serveur :", baseUrl);
+    
+    let isFirstFetch = true;
     
     // Fonction pour récupérer les informations serveur
     const fetchServerInfo = async () => {
       try {
-        const response = await axios.get(`${baseUrl}/api/server-info`);
-        console.log('Informations serveur reçues:', response.data);
+        // Indiquer que nous chargeons les données serveur uniquement au premier chargement
+        if (isFirstFetch) {
+          setServerInfoLoading(true);
+        }
+        
+        const startTime = performance.now();
+        const response = await axios.get(`${baseUrl}/api/server-info`, {
+          timeout: 3000, // Timeout de 3 secondes pour éviter les attentes trop longues
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          }
+        });
+        const endTime = performance.now();
+        
+        console.log(`Informations serveur reçues en ${Math.round(endTime-startTime)}ms:`, response.data);
+        
+        // Mettre à jour les stats et enregistrer dans le cache local
         updateServerStats(response.data);
+        
+        // Sauvegarder dans le localStorage pour une utilisation future
+        const cacheData = {
+          timestamp: Date.now(),
+          data: response.data
+        };
+        localStorage.setItem('cachedServerInfo', JSON.stringify(cacheData));
+        
+        // Nous avons maintenant des données fraîches
+        setServerInfoLoading(false);
+        isFirstFetch = false;
       } catch (error) {
         console.error('Erreur lors de la récupération des informations serveur:', error);
+        // En cas d'erreur, ne plus indiquer le chargement pour éviter un indicateur de chargement infini
+        setServerInfoLoading(false);
       }
     };
     
@@ -147,15 +197,16 @@ const Settings = () => {
     fetchServerInfo();
     
     // Configuration de l'intervalle pour les mises à jour régulières
-    const intervalId = setInterval(fetchServerInfo, 2000);
+    // Utiliser un intervalle plus long pour réduire la charge sur le serveur
+    const intervalId = setInterval(fetchServerInfo, 3000); // Passé de 2s à 3s
     
     // Nettoyage lors du démontage du composant
     return () => {
       clearInterval(intervalId);
     };
   }, [accessMode]); // Réexécute l'effet si le mode d'accès change
-  
-  // Fonction pour mettre à jour les statistiques du serveur
+
+  // Fonction pour mettre à jour les statistiques du serveur avec transition fluide
   const updateServerStats = (data) => {
     if (!data) return;
     
@@ -187,17 +238,32 @@ const Settings = () => {
       if (ramMatch) ramUsage = parseFloat(ramMatch[0]);
     }
     
-    // Mettre à jour les statistiques
-    setStats(prev => ({
-      ...prev,
-      storageUsed: storageUsed,
-      storageLimit: storageTotal,
-      cpuUsage: cpuUsage,
-      ramUsage: ramUsage
-    }));
+    // Détecter si les valeurs ont changé de manière significative
+    setStats(prev => {
+      // Ne mettre à jour que si les valeurs ont changé de plus de 1% pour éviter les micro-mises à jour
+      const shouldUpdateStorage = Math.abs(storageUsed - prev.storageUsed) > storageTotal * 0.01 || 
+                                 Math.abs(storageTotal - prev.storageLimit) > prev.storageLimit * 0.01;
+      
+      const shouldUpdateCPU = Math.abs(cpuUsage - prev.cpuUsage) > 1;
+      const shouldUpdateRAM = Math.abs(ramUsage - prev.ramUsage) > 1;
+      
+      // Si rien n'a changé significativement, renvoyer l'état précédent
+      if (!shouldUpdateStorage && !shouldUpdateCPU && !shouldUpdateRAM) {
+        return prev;
+      }
+      
+      // Sinon, mettre à jour avec les nouvelles valeurs
+      return {
+        ...prev,
+        storageUsed: shouldUpdateStorage ? storageUsed : prev.storageUsed,
+        storageLimit: shouldUpdateStorage ? storageTotal : prev.storageLimit,
+        cpuUsage: shouldUpdateCPU ? cpuUsage : prev.cpuUsage,
+        ramUsage: shouldUpdateRAM ? ramUsage : prev.ramUsage,
+        lastUpdated: Date.now()
+      };
+    });
   };
 
-  // Fonction pour changer le mode d'accès
   const handleAccessModeChange = (newMode) => {
     // Mettre à jour le localStorage
     localStorage.setItem('accessMode', newMode);
@@ -249,17 +315,57 @@ const Settings = () => {
     setAppsError(null);
     
     try {
-      const response = await axios.get(`${getServerUrl(accessMode)}/api/apps`);
-      setApplications(response.data.map(app => ({
+      // Configuration axios avec timeout plus long pour éviter les timeouts trop rapides
+      const config = {
+        timeout: 10000, // 10 secondes de timeout
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      };
+      
+      console.log(`Chargement des applications depuis: ${getServerUrl(accessMode)}/api/apps`);
+      const response = await axios.get(`${getServerUrl(accessMode)}/api/apps`, config);
+      
+      // Vérifier la réponse
+      if (!response.data || !Array.isArray(response.data)) {
+        console.error('Format de réponse invalide:', response.data);
+        throw new Error('Format de réponse invalide');
+      }
+      
+      console.log(`${response.data.length} applications reçues`);
+      
+      const mappedApps = response.data.map(app => ({
         ...app,
         port: app.ports && app.ports.length > 0 ? app.ports[0] : null,
         autostart: false // Par défaut, on met à false, à améliorer avec une API de configuration
-      })));
+      }));
+      
+      setApplications(mappedApps);
       setAppsLoading(false);
+      setAppsError(null); // Réinitialiser l'erreur en cas de succès
+      return response.data; // Retourner les données pour chaînage de promesses
     } catch (error) {
       console.error('Erreur lors de la récupération des applications:', error);
-      setAppsError('Impossible de récupérer la liste des applications');
+      
+      // Message d'erreur plus détaillé
+      let errorMessage = 'Impossible de récupérer la liste des applications';
+      
+      if (error.response) {
+        // Réponse du serveur avec un code d'erreur
+        errorMessage += ` (${error.response.status}: ${error.response.statusText})`;
+        console.error('Détails de la réponse:', error.response.data);
+      } else if (error.request) {
+        // Requête envoyée mais pas de réponse reçue
+        errorMessage += ' (Aucune réponse du serveur)';
+      } else {
+        // Erreur lors de la création de la requête
+        errorMessage += ` (${error.message})`;
+      }
+      
+      setAppsError(errorMessage);
       setAppsLoading(false);
+      throw error; // Propager l'erreur pour la gestion en amont
     }
   };
 
@@ -277,8 +383,11 @@ const Settings = () => {
       // Appeler l'API pour effectuer l'action
       const response = await axios.post(`${getServerUrl(accessMode)}/api/apps/${appId}/${action}`);
       
+      // Attendre un court instant pour que les changements prennent effet sur le serveur
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
       // Mettre à jour la liste des applications après l'action
-      fetchApplications();
+      await loadApplications(); // Utiliser loadApplications avec gestion d'erreur
       
       // Afficher un message de succès
       setAppActionStatus({
@@ -414,8 +523,30 @@ const Settings = () => {
     }
   };
 
+  // Fonction pour charger les applications avec gestion d'erreur améliorée et tentatives de reconnexion
+  const loadApplications = async (retryCount = 0) => {
+    try {
+      await fetchApplications();
+      console.log('Applications chargées avec succès');
+    } catch (error) {
+      console.error(`Erreur lors du chargement des applications (tentative ${retryCount + 1})`, error);
+      
+      // Essayer de recharger une fois automatiquement après une première erreur
+      if (retryCount < 1) {
+        console.log('Tentative de rechargement automatique dans 2 secondes...');
+        setTimeout(() => loadApplications(retryCount + 1), 2000);
+      }
+    }
+  };
+
+  // Effet pour charger les applications au montage du composant et quand accessMode change
   useEffect(() => {
-    fetchApplications();
+    console.log('Chargement initial des applications...');
+    
+    // Délai court pour s'assurer que tout est initialisé avant de charger les applications
+    const initTimer = setTimeout(() => {
+      loadApplications();
+    }, 500);
     
     // Connexion au websocket pour les mises à jour en temps réel
     const socket = io(getServerUrl(accessMode));
@@ -448,6 +579,7 @@ const Settings = () => {
     
     return () => {
       socket.disconnect();
+      clearTimeout(initTimer);
     };
   }, [accessMode]);
 
@@ -472,14 +604,17 @@ const Settings = () => {
 
       {/* Section Statistiques */}
       <section className="settings-section stats-section">
-        <h2>Vue d'ensemble du système</h2>
+        <h2>
+          Vue d'ensemble du système
+          {serverInfoLoading && <span className="server-info-loading"> (Actualisation...)</span>}
+        </h2>
         <div className="stats-grid">
           {/* Stockage */}
           <div className="stat-card storage" onClick={handleShowDisks} style={{ cursor: 'pointer' }}>
-            <h3>Stockage</h3>
+            <h3>Stockage {serverInfoLoading && <span className="info-refreshing-indicator"></span>}</h3>
             <div className="progress-container">
               <div 
-                className="progress-bar" 
+                className={`progress-bar ${serverInfoLoading ? 'loading-transition' : ''}`}
                 style={{ width: formatPercentage(stats.storageUsed, stats.storageLimit) }}
               ></div>
             </div>
@@ -699,7 +834,161 @@ const Settings = () => {
           </div>
         </div>
       </section>
-      
+          {/* Section Applications */}
+          <section className="settings-section">
+        <h2>Gestion des Applications</h2>
+        
+        {/* Modal pour afficher les détails d'une application */}
+        {selectedApp && (
+          <div className="docker-app-details-modal">
+            <div className="docker-app-details-content">
+              <div className="docker-app-details-header">
+                <h3>{selectedApp.name}</h3>
+                <button className="docker-close-btn" onClick={closeAppDetails}>×</button>
+              </div>
+              <div className="docker-app-details-body">
+                <div className="docker-app-status-info">
+                  <div className={`docker-app-status ${selectedApp.status}`}>
+                    <span className="docker-status-icon"></span>
+                    <span className="docker-status-text">
+                      {selectedApp.status === 'running' ? 'Opérationnel' : 'Arrêté'}
+                    </span>
+                  </div>
+                  <div className="docker-app-progress">
+                    <div className="docker-progress-bar">
+                      <div 
+                        className="docker-progress-fill" 
+                        style={{ width: `${selectedApp.progress}%` }}
+                      ></div>
+                    </div>
+                    <span className="docker-progress-text">{selectedApp.progress}% ({selectedApp.containersRunning})</span>
+                  </div>
+                </div>
+                
+                <div className="docker-app-info-section">
+                  <h4>Ports</h4>
+                  {selectedApp.ports && selectedApp.ports.length > 0 ? (
+                    <div className="docker-ports-list">
+                      {selectedApp.ports.map(port => (
+                        <div key={port} className="docker-port-tag">
+                          {port}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>Aucun port exposé</p>
+                  )}
+                </div>
+                
+                <div className="docker-app-info-section">
+                  <h4>Conteneurs</h4>
+                  <div className="docker-containers-list">
+                    {selectedApp.containers && selectedApp.containers.map(container => (
+                      <div key={container.id} className="docker-container-item">
+                        <div className="docker-container-name">{container.name}</div>
+                        <div className={`docker-container-status ${container.state}`}>
+                          {container.state}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="docker-app-actions">
+                  <button
+                    className={`docker-action-btn-large ${selectedApp.status === 'running' ? 'stop' : 'start'}`}
+                    onClick={() => handleAppAction(selectedApp.id, selectedApp.status === 'running' ? 'stop' : 'start')}
+                  >
+                    {selectedApp.status === 'running' ? 'Arrêter tous les conteneurs' : 'Démarrer tous les conteneurs'}
+                  </button>
+                  <button
+                    className="docker-action-btn-large restart"
+                    onClick={() => handleAppAction(selectedApp.id, 'restart')}
+                    disabled={selectedApp.status !== 'running'}
+                  >
+                    Redémarrer tous les conteneurs
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {appsLoading ? (
+          <div className="docker-loading-container">
+            <div className="docker-loading-spinner"></div>
+            <p>Chargement des applications...</p>
+          </div>
+        ) : appsError ? (
+          <div className="docker-error-container">
+            <p className="docker-error-message">{appsError}</p>
+            <button className="docker-retry-button" onClick={() => {
+              console.log('Tentative manuelle de rechargement des applications...');
+              loadApplications();
+            }}>Réessayer</button>
+          </div>
+        ) : applications.length === 0 ? (
+          <div className="docker-empty-state">
+            <p>Aucune application Docker détectée.</p>
+          </div>
+        ) : (
+          <div className="docker-apps-grid">
+            {applications.map(app => (
+              <div 
+                key={app.id} 
+                className={`docker-app-card ${selectedApp && selectedApp.id === app.id ? 'active' : ''}`}
+                onClick={() => handleAppSelect(app)}
+              >
+                <div className="docker-app-header">
+                  <h3>{app.name}</h3>
+                  <span className={`docker-status-badge ${app.status}`}>
+                    {app.status === 'running' ? 'En cours' : 'Arrêté'}
+                  </span>
+                </div>
+                
+                {appActionStatus.show && appActionStatus.appId === app.id && (
+                  <div className={`docker-action-status ${appActionStatus.success ? 'success' : 'error'}`}>
+                    {appActionStatus.message}
+                  </div>
+                )}
+                
+                <div className="docker-app-controls">
+                  <button
+                    className={`docker-action-btn ${app.status === 'running' ? 'stop' : 'start'}`}
+                    onClick={(e) => {
+                      e.stopPropagation(); // Empêcher le déclenchement du onClick du parent
+                      handleAppAction(app.id, app.status === 'running' ? 'stop' : 'start')
+                    }}
+                  >
+                    {app.status === 'running' ? 'Arrêter' : 'Démarrer'}
+                  </button>
+                  <button
+                    className="docker-action-btn restart"
+                    onClick={(e) => {
+                      e.stopPropagation(); // Empêcher le déclenchement du onClick du parent
+                      handleAppAction(app.id, 'restart')
+                    }}
+                    disabled={app.status !== 'running'}
+                  >
+                    Redémarrer
+                  </button>
+                  <div className="docker-autostart-control" onClick={(e) => e.stopPropagation()}>
+                    <label className="switch">
+                      <input
+                        type="checkbox"
+                        checked={app.autostart}
+                        onChange={(e) => handleAppAutostart(app.id, e.target.checked)}
+                      />
+                      <span className="slider"></span>
+                    </label>
+                    <span className="docker-autostart-label">Auto</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
       {/* Section Paramètres */}
       <section className="settings-section">
         <h2>Configuration du Cloud</h2>
@@ -882,159 +1171,6 @@ const Settings = () => {
             </div>
           </div>
         </div>
-      </section>
-
-      {/* Section Applications */}
-      <section className="settings-section">
-        <h2>Gestion des Applications</h2>
-        
-        {/* Modal pour afficher les détails d'une application */}
-        {selectedApp && (
-          <div className="docker-app-details-modal">
-            <div className="docker-app-details-content">
-              <div className="docker-app-details-header">
-                <h3>{selectedApp.name}</h3>
-                <button className="docker-close-btn" onClick={closeAppDetails}>×</button>
-              </div>
-              <div className="docker-app-details-body">
-                <div className="docker-app-status-info">
-                  <div className={`docker-app-status ${selectedApp.status}`}>
-                    <span className="docker-status-icon"></span>
-                    <span className="docker-status-text">
-                      {selectedApp.status === 'running' ? 'Opérationnel' : 'Arrêté'}
-                    </span>
-                  </div>
-                  <div className="docker-app-progress">
-                    <div className="docker-progress-bar">
-                      <div 
-                        className="docker-progress-fill" 
-                        style={{ width: `${selectedApp.progress}%` }}
-                      ></div>
-                    </div>
-                    <span className="docker-progress-text">{selectedApp.progress}% ({selectedApp.containersRunning})</span>
-                  </div>
-                </div>
-                
-                <div className="docker-app-info-section">
-                  <h4>Ports</h4>
-                  {selectedApp.ports && selectedApp.ports.length > 0 ? (
-                    <div className="docker-ports-list">
-                      {selectedApp.ports.map(port => (
-                        <div key={port} className="docker-port-tag">
-                          {port}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p>Aucun port exposé</p>
-                  )}
-                </div>
-                
-                <div className="docker-app-info-section">
-                  <h4>Conteneurs</h4>
-                  <div className="docker-containers-list">
-                    {selectedApp.containers && selectedApp.containers.map(container => (
-                      <div key={container.id} className="docker-container-item">
-                        <div className="docker-container-name">{container.name}</div>
-                        <div className={`docker-container-status ${container.state}`}>
-                          {container.state}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                
-                <div className="docker-app-actions">
-                  <button
-                    className={`docker-action-btn-large ${selectedApp.status === 'running' ? 'stop' : 'start'}`}
-                    onClick={() => handleAppAction(selectedApp.id, selectedApp.status === 'running' ? 'stop' : 'start')}
-                  >
-                    {selectedApp.status === 'running' ? 'Arrêter tous les conteneurs' : 'Démarrer tous les conteneurs'}
-                  </button>
-                  <button
-                    className="docker-action-btn-large restart"
-                    onClick={() => handleAppAction(selectedApp.id, 'restart')}
-                    disabled={selectedApp.status !== 'running'}
-                  >
-                    Redémarrer tous les conteneurs
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {appsLoading ? (
-          <div className="docker-loading-container">
-            <div className="docker-loading-spinner"></div>
-            <p>Chargement des applications...</p>
-          </div>
-        ) : appsError ? (
-          <div className="docker-error-container">
-            <p className="docker-error-message">{appsError}</p>
-            <button className="docker-retry-button" onClick={fetchApplications}>Réessayer</button>
-          </div>
-        ) : applications.length === 0 ? (
-          <div className="docker-empty-state">
-            <p>Aucune application Docker détectée.</p>
-          </div>
-        ) : (
-          <div className="docker-apps-grid">
-            {applications.map(app => (
-              <div 
-                key={app.id} 
-                className={`docker-app-card ${selectedApp && selectedApp.id === app.id ? 'active' : ''}`}
-                onClick={() => handleAppSelect(app)}
-              >
-                <div className="docker-app-header">
-                  <h3>{app.name}</h3>
-                  <span className={`docker-status-badge ${app.status}`}>
-                    {app.status === 'running' ? 'En cours' : 'Arrêté'}
-                  </span>
-                </div>
-                
-                {appActionStatus.show && appActionStatus.appId === app.id && (
-                  <div className={`docker-action-status ${appActionStatus.success ? 'success' : 'error'}`}>
-                    {appActionStatus.message}
-                  </div>
-                )}
-                
-                <div className="docker-app-controls">
-                  <button
-                    className={`docker-action-btn ${app.status === 'running' ? 'stop' : 'start'}`}
-                    onClick={(e) => {
-                      e.stopPropagation(); // Empêcher le déclenchement du onClick du parent
-                      handleAppAction(app.id, app.status === 'running' ? 'stop' : 'start')
-                    }}
-                  >
-                    {app.status === 'running' ? 'Arrêter' : 'Démarrer'}
-                  </button>
-                  <button
-                    className="docker-action-btn restart"
-                    onClick={(e) => {
-                      e.stopPropagation(); // Empêcher le déclenchement du onClick du parent
-                      handleAppAction(app.id, 'restart')
-                    }}
-                    disabled={app.status !== 'running'}
-                  >
-                    Redémarrer
-                  </button>
-                  <div className="docker-autostart-control" onClick={(e) => e.stopPropagation()}>
-                    <label className="switch">
-                      <input
-                        type="checkbox"
-                        checked={app.autostart}
-                        onChange={(e) => handleAppAutostart(app.id, e.target.checked)}
-                      />
-                      <span className="slider"></span>
-                    </label>
-                    <span className="docker-autostart-label">Auto</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </section>
 
       {/* Section Stockage */}
