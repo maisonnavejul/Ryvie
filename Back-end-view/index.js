@@ -359,7 +359,7 @@ async function getServerInfo() {
 const ldapConfig = {
   url: process.env.LDAP_URL || 'ldap://localhost:389',
   bindDN: process.env.LDAP_BIND_DN || 'cn=read-only,ou=users,dc=example,dc=org',
-  bindPassword: process.env.LDAP_BIND_PASSWORD || 'Wimereux',
+  bindPassword: process.env.LDAP_BIND_PASSWORD || 'readpassword',
   userSearchBase: process.env.LDAP_USER_SEARCH_BASE || 'ou=users,dc=example,dc=org',
   groupSearchBase: process.env.LDAP_GROUP_SEARCH_BASE || 'ou=users,dc=example,dc=org',
   userFilter: process.env.LDAP_USER_FILTER || '(objectClass=inetOrgPerson)',

@@ -96,15 +96,25 @@ const Welcome = () => {
       window.electronAPI.onRyvieIP(handleServerIP);
 
       // Demander l'IP initiale du serveur (au cas où elle a été détectée avant le chargement de ce composant)
-      window.electronAPI.requestInitialServerIP().then(ip => {
-        if (ip) {
-          console.log(`IP initiale récupérée : ${ip}`);
-          setServerIP(ip);
-          setLoading(false);
+      const checkInitialIP = async () => {
+        try {
+          const ip = await window.electronAPI.requestInitialServerIP();
+          if (ip) {
+            console.log(`IP initiale récupérée : ${ip}`);
+            setServerIP(ip);
+            setLoading(false);
+          } else {
+            // Si aucune IP n'est encore disponible, réessayer après un délai
+            console.log('Aucune IP initiale disponible, nouvelle tentative dans 1 seconde...');
+            setTimeout(checkInitialIP, 1000);
+          }
+        } catch (err) {
+          console.error('Erreur lors de la récupération de l\'IP initiale:', err);
         }
-      }).catch(err => {
-        console.error('Erreur lors de la récupération de l\'IP initiale:', err);
-      });
+      };
+      
+      // Lancer la vérification initiale avec des tentatives répétées
+      checkInitialIP();
 
       // Nettoyage de l'effet
       return () => {
