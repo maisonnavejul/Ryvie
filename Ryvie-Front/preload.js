@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Mettre à jour le mode d'accès global
   updateAccessMode: (mode) => ipcRenderer.send('update-access-mode', mode),
 
+  // Ouvrir une fenêtre externe sans barre de menu
+  openExternalWindow: (url) => ipcRenderer.invoke('open-external-window', url),
+
   // Nouvelles fonctions pour la gestion des sessions utilisateur
   invoke: (channel, ...args) => {
     const validChannels = ['create-user-window', 'clear-user-session', 'create-user-window-with-mode', 'update-session-partition', 'close-current-window'];

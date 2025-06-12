@@ -41,6 +41,10 @@ const BASE_URLS = {
     RPictures: {
       PUBLIC: 'https://rpictures.makerfaire.jules.ryvie.fr',
       PRIVATE: 'http://ryvie.local:2283'
+    },
+    HOMEASSISTANT: {
+      PUBLIC: 'https://homeassistant.makerfaire.jules.ryvie.fr',
+      PRIVATE: 'http://ryvie.local:3000'
     }
   }
 };

@@ -403,10 +403,48 @@ ipcMain.on('update-access-mode', (event, mode) => {
   }
 });
 
-// Function to create login window
+// Gestion de l'ouverture de fenêtres externes sans barre de menu
+ipcMain.handle('open-external-window', async (event, url) => {
+  try {
+    // Récupérer l'utilisateur actuel et son mode d'accès depuis la fenêtre qui a fait l'appel
+    const sender = event.sender;
+    const webContents = sender.webContents || sender;
+    const session = webContents.session;
+    
+    // Créer une nouvelle fenêtre
+    const childWindow = new BrowserWindow({
+      width: 1200,
+      height: 800,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        session: session, // Réutiliser la même session pour conserver les cookies/authentification
+        sandbox: false,
+        webSecurity: false,
+      },
+      autoHideMenuBar: true,   // Cache automatiquement la barre de menu
+      frame: true,            // Garde le cadre de la fenêtre pour pouvoir la déplacer
+    });
+    
+    // Supprimer complètement le menu
+    childWindow.setMenu(null);
+    
+    // Copier l'User-Agent de la fenêtre parente
+    childWindow.webContents.setUserAgent(webContents.getUserAgent());
+    
+    // Charger l'URL
+    childWindow.loadURL(url);
+    
+    return true;
+  } catch (error) {
+    console.error('Erreur lors de l\'ouverture de la fenêtre externe:', error);
+    return false;
+  }
+});
+
 function createLoginWindow() {
   mainWindow = new BrowserWindow({
-    width: 1280,
+    width: 1100,
     height: 720,
     webPreferences: {
       nodeIntegration: true,
@@ -424,9 +462,9 @@ function createLoginWindow() {
   mainWindow.loadURL(startUrl);
   
   // Open the DevTools in development mode
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.webContents.openDevTools();
-  }
+  //if (process.env.NODE_ENV === 'development') {
+   // mainWindow.webContents.openDevTools();
+  //}
   
   mainWindow.on('closed', () => {
     mainWindow = null;

@@ -99,6 +99,14 @@ const APPS_CONFIG = {
     isTaskbarApp: true,
     route: '/settings',
   },
+  'home-assistant.png': {
+    name: 'Home',
+    urlKey: 'HOMEASSISTANT',
+    showStatus: true,
+    isTaskbarApp: false,
+    containerName: 'app-home',
+    useDirectWindow: true,
+  },
 };
 
 // Types pour react-dnd
@@ -242,7 +250,7 @@ const Home = () => {
       bottom3: ['Outline.png'],
       bottom4: ['rTransfer.png'],
       bottom5: ['rDrop.png'],
-      bottom6: [],
+      bottom6: ['home-assistant.png'],
       bottom7: [],
       bottom8: [],
       bottom9: [],
@@ -397,10 +405,12 @@ const Home = () => {
 
   const openAppWindow = (url, useOverlay = true) => {
     if (!useOverlay) {
-      window.open(url, '_blank', 'width=1000,height=700');
+      // Utiliser l'IPC pour demander au processus principal d'ouvrir une fenêtre sans menu
+      window.electronAPI.openExternalWindow(url);
       return;
     } else {
-      window.open(url, '_blank', 'width=1000,height=700');
+      // Utiliser l'IPC pour demander au processus principal d'ouvrir une fenêtre sans menu
+      window.electronAPI.openExternalWindow(url);
     }
   };
 
