@@ -23,7 +23,7 @@ const BASE_URLS = {
       PRIVATE: 'http://ryvie.local:3001'
     },
     PORTAINER: {
-      PUBLIC: 'https://portainer.test.jules.ryvie.fr',
+      PUBLIC: 'https://portainer.makerfaire.jules.ryvie.fr',
       PRIVATE: 'http://ryvie.local:9005'
     },
     OUTLINE: {
@@ -35,7 +35,7 @@ const BASE_URLS = {
       PRIVATE: 'http://ryvie.local:3000'
     },
     RDROP: {
-      PUBLIC: 'https://rdrop.test.jules.ryvie.fr',
+      PUBLIC: 'https://rdrop.makerfaire.jules.ryvie.fr',
       PRIVATE: 'http://ryvie.local:8080'
     },
     RPictures: {

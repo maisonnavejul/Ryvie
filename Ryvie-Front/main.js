@@ -33,6 +33,28 @@ app.on('ready', () => {
   // Définir le chemin sans créer le dossier immédiatement
   downloadPath = path.join(app.getPath('downloads'), `Ryvie-rDrop-${dateStr}`);
   app.setPath('downloads', downloadPath);
+  
+  // ⚠️ Configuration globale pour tous les téléchargements
+  app.commandLine.appendSwitch('disable-features', 'DownloadBubble,DownloadBubbleV2');
+  
+  // Préférence de téléchargement pour toutes les sessions
+  session.defaultSession.on('will-download', (event, item) => {
+    console.log('Téléchargement détecté dans la session par défaut');
+    
+    if (!fs.existsSync(downloadPath)) {
+      fs.mkdirSync(downloadPath, { recursive: true });
+      console.log(`Dossier de téléchargement créé: ${downloadPath}`);
+    }
+    
+    const filePath = path.join(downloadPath, item.getFilename());
+    item.setSavePath(filePath);
+  });
+  
+  // Assurer que le dossier de téléchargement existe au démarrage
+  if (!fs.existsSync(downloadPath)) {
+    fs.mkdirSync(downloadPath, { recursive: true });
+    console.log(`Dossier de téléchargement créé: ${downloadPath}`);
+  }
 });
 
 // Gestionnaire pour changer le dossier de téléchargement
@@ -75,22 +97,71 @@ function createWindowForUser(userId, accessMode, userRole) {
 
   const userSession = session.fromPartition(`persist:${userId}-${accessMode}-${userRole}`);
   console.log(`Création de la fenêtre pour l'utilisateur: ${userId} avec le mode ${accessMode} et le rôle ${userRole}`);
-
+  
+  // Configurer les préférences de téléchargement de manière globale
+  userSession.setDownloadPath(downloadPath);
+  
+  // Définir explicitement saveAs: false pour toutes les demandes de téléchargement
+  const originalDownloadURL = userSession.downloadURL;
+  userSession.downloadURL = (url, options = {}) => {
+    console.log("Téléchargement URL intercepté:", url);
+    return originalDownloadURL.call(userSession, url, {
+      ...options,
+      saveAs: false
+    });
+  };
+  
+  // Désactiver complètement le dialogue de téléchargement
   userSession.on('will-download', (event, item, webContents) => {
-    const filePath = path.join(downloadPath, item.getFilename());
+    // Assurer que le répertoire existe
+    if (!fs.existsSync(downloadPath)) {
+      fs.mkdirSync(downloadPath, { recursive: true });
+      console.log(`Dossier de téléchargement créé: ${downloadPath}`);
+    }
+    
+    // Récupérer les informations sur le fichier
+    const fileName = item.getFilename();
+    const filePath = path.join(downloadPath, fileName);
+    console.log(`⬇️ Téléchargement en cours: ${fileName} -> ${filePath}`);
+    
+    // Définir le chemin et d'autres options
+    item.setSaveDialogOptions({ defaultPath: filePath });
     item.setSavePath(filePath);
-
+    
+    // Suivre l'élément de téléchargement
     pendingDownloads.add(item);
-
+    
+    // Surveiller la progression
+    item.on('updated', (event, state) => {
+      if (state === 'progressing') {
+        if (item.isPaused()) {
+          console.log(`Téléchargement en pause: ${fileName}`);
+        } else {
+          const progress = Math.round((item.getReceivedBytes() / item.getTotalBytes()) * 100);
+          console.log(`Progression ${fileName}: ${progress}%`);
+        }
+      } else if (state === 'interrupted') {
+        console.log(`Téléchargement interrompu: ${fileName}`);
+      }
+    });
+    
+    // Gérer la fin du téléchargement
     item.on('done', (event, state) => {
       pendingDownloads.delete(item);
-
+      
       if (state === 'completed') {
+        console.log(`✅ Téléchargement terminé: ${fileName}`);
+        
+        // Informer la fenêtre rDrop si tous les téléchargements sont terminés
         if (pendingDownloads.size === 0 && webContents.getURL().includes('rdrop')) {
-          // showNotification(webContents, 'Vos fichiers ont été envoyés avec succès');
+          console.log('📦 Tous les téléchargements terminés!');
+          webContents.send('download-complete', {
+            fileName,
+            path: filePath
+          });
         }
       } else {
-        console.error('Erreur lors du téléchargement:', state);
+        console.error(`❌ Erreur lors du téléchargement de ${fileName}: ${state}`);
       }
     });
   });
@@ -239,9 +310,41 @@ ipcMain.handle('create-user-window-with-mode', async (event, userId, accessMode,
 ipcMain.handle('close-current-window', (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (window && !window.isDestroyed()) {
-    //window.close();
+    window.close();
+    return true;
   }
-  return true;
+  return false;
+});
+
+// Gestionnaire pour les notifications de fichiers reçus via rDrop
+ipcMain.handle('notify-file-received', (event, fileName) => {
+  console.log(`Notification de réception de fichier: ${fileName}`);
+  
+  // Vérifier si le dossier de téléchargement existe, sinon le créer
+  if (!fs.existsSync(downloadPath)) {
+    try {
+      fs.mkdirSync(downloadPath, { recursive: true });
+      console.log(`Dossier de téléchargement créé: ${downloadPath}`);
+    } catch (error) {
+      console.error(`Erreur lors de la création du dossier: ${error}`);
+    }
+  }
+  
+  // Récupérer les informations de la fenêtre pour l'envoi de notifications
+  const webContents = event.sender;
+  if (webContents && webContents.getURL().includes('rdrop')) {
+    // Si nous sommes dans rDrop, envoyer une notification de confirmation
+    webContents.send('download-ready', {
+      fileName,
+      downloadPath
+    });
+  }
+  
+  return {
+    success: true,
+    fileName,
+    downloadPath
+  };
 });
 
 // Modify the existing create-user-window handler to use the default mode
