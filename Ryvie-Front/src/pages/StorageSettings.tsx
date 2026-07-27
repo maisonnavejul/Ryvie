@@ -195,12 +195,9 @@ const StorageSettings = () => {
   const [dockerMovePrechecking, setDockerMovePrechecking] = useState(false);
   const [dockerMoveState, setDockerMoveState] = useState<any>(null);
 
-  // Récupération d'espace disque (nettoyage anciennes installs)
+  // Analyse de l'espace récupérable (anciennes installs) — alimente la case du modal Docker move
   const [diskReclaim, setDiskReclaim] = useState<any>(null);
   const [diskReclaimScanning, setDiskReclaimScanning] = useState(false);
-  const [showReclaimModal, setShowReclaimModal] = useState(false);
-  const [reclaimRunning, setReclaimRunning] = useState(false);
-  const [reclaimLog, setReclaimLog] = useState<string[]>([]);
 
   // Helper: strip emojis from strings for consistent UI DA
   const stripEmojis = (str) => {
@@ -349,11 +346,6 @@ const StorageSettings = () => {
         }
       });
 
-      // Écouter les logs de récupération d'espace disque
-      socket.on('disk-reclaim-log', (line) => {
-        setReclaimLog(prev => [...prev, line]);
-      });
-
       // Nettoyage à la destruction du composant
       return () => {
         console.log('[StorageSettings] Déconnexion Socket.IO');
@@ -362,7 +354,6 @@ const StorageSettings = () => {
         socket.off('mdraid-migration-progress');
         socket.off('docker-move-log');
         socket.off('docker-move-progress');
-        socket.off('disk-reclaim-log');
         socket.disconnect();
       };
     }
@@ -1142,7 +1133,7 @@ const StorageSettings = () => {
     }
   };
 
-  // Scanne le disque système pour l'espace récupérable (anciennes installs + zones libres)
+  // Scanne le disque système pour l'espace récupérable (anciennes installs orphelines)
   const loadDiskReclaim = useCallback(async () => {
     setDiskReclaimScanning(true);
     try {
@@ -1156,28 +1147,6 @@ const StorageSettings = () => {
       setDiskReclaimScanning(false);
     }
   }, []);
-
-  // Lance la récupération d'espace (wipefs + btrfs device add côté backend)
-  const executeDiskReclaim = async () => {
-    setReclaimRunning(true);
-    setReclaimLog([]);
-    try {
-      const accessMode = getCurrentAccessMode() || 'private';
-      const serverUrl = getServerUrl(accessMode);
-      const resp = await axios.post(`${serverUrl}/api/storage/disk-reclaim`, {}, { timeout: 300000 });
-      if (resp.data.success) {
-        setReclaimLog(resp.data.log || []);
-        await loadDiskReclaim();
-        loadInventory();
-      } else {
-        setReclaimLog([...(resp.data.log || []), `Échec: ${resp.data.error || 'inconnu'}`]);
-      }
-    } catch (error) {
-      setReclaimLog((prev) => [...prev, `Erreur: ${error.response?.data?.error || error.message}`]);
-    } finally {
-      setReclaimRunning(false);
-    }
-  };
 
   // Charger l'emplacement Docker au montage (et reprendre un déplacement en cours)
   useEffect(() => {
@@ -1964,65 +1933,6 @@ const StorageSettings = () => {
                 )}
               </div>
 
-              {/* ==================== RÉCUPÉRATION D'ESPACE DISQUE ==================== */}
-              <div className="targets-section">
-                <h2><FontAwesomeIcon icon={faExpand} /> Récupérer l'espace disque</h2>
-                <p className="section-subtitle">Récupère à chaud l'espace des anciennes installations et des zones non allouées du disque système, en l'ajoutant à la racine (btrfs). Sans déplacement de données ni redémarrage.</p>
-
-                {diskReclaimScanning && (
-                  <div style={{ fontSize: '0.9rem' }}><FontAwesomeIcon icon={faSpinner} spin /> Analyse du disque système…</div>
-                )}
-
-                {diskReclaim && !diskReclaimScanning && (
-                  <div style={{ fontSize: '0.9rem' }}>
-                    {diskReclaim.items && diskReclaim.items.length > 0 ? (
-                      <>
-                        <div style={{ marginBottom: '0.5rem' }}>
-                          Racine <strong>{diskReclaim.targetMount}</strong> : <strong>{formatBytes(diskReclaim.currentSizeBytes || 0)}</strong> → <strong style={{ color: '#10b981' }}>{formatBytes(diskReclaim.projectedSizeBytes || 0)}</strong> (+{formatBytes(diskReclaim.reclaimableBytes || 0)})
-                        </div>
-                        <ul style={{ margin: '0 0 0.5rem', paddingLeft: '1.2rem' }}>
-                          {diskReclaim.items.map((it: any, i: number) => (
-                            <li key={i}>{it.label}{it.device ? ` (${it.device})` : ''} — <strong>{formatBytes(it.sizeBytes || 0)}</strong></li>
-                          ))}
-                        </ul>
-                        {(diskReclaim.skipped || []).length > 0 && (
-                          <div style={{ color: '#9ca3af', fontSize: '0.82rem', marginBottom: '0.5rem' }}>
-                            Ignoré : {diskReclaim.skipped.map((s: any) => `${s.device || ''} (${formatBytes(s.sizeBytes || 0)}, ${s.reason})`).join(' · ')}
-                          </div>
-                        )}
-                        {(diskReclaim.warnings || []).map((w: string, i: number) => (
-                          <div key={i} className="storage-alert storage-alert-warning" style={{ marginBottom: '0.5rem' }}>{w}</div>
-                        ))}
-                      </>
-                    ) : (
-                      <div style={{ color: '#6b7280' }}>
-                        {(diskReclaim.reasons || ['Aucun espace récupérable détecté']).join(' · ')}
-                      </div>
-                    )}
-
-                    {reclaimLog.length > 0 && (
-                      <pre style={{ background: '#0f172a', color: '#e2e8f0', padding: '0.75rem', borderRadius: '6px', fontSize: '0.8rem', maxHeight: '180px', overflow: 'auto', marginTop: '0.5rem' }}>
-                        {reclaimLog.join('\n')}
-                      </pre>
-                    )}
-
-                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                      <button className="btn-secondary" onClick={loadDiskReclaim} disabled={reclaimRunning}>Rafraîchir</button>
-                      {diskReclaim.items && diskReclaim.items.length > 0 && (
-                        <button
-                          className="btn-create-raid"
-                          style={{ background: '#10b981' }}
-                          disabled={!diskReclaim.canProceed || reclaimRunning || !!resyncProgress || (migrationState && migrationState.status === 'running')}
-                          onClick={() => { setReclaimLog([]); setShowReclaimModal(true); }}
-                        >
-                          <FontAwesomeIcon icon={faExpand} /> Récupérer {formatBytes(diskReclaim.reclaimableBytes || 0)}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
               {/* ==================== MIGRATION / CONFIGURATION SECTION ==================== */}
               <div className="targets-section">
                 <h2><FontAwesomeIcon icon={faExchangeAlt} /> {t('storageSettings.autoMigrate')}</h2>
@@ -2656,29 +2566,25 @@ const StorageSettings = () => {
               </div>
             </div>
 
-            {/* Récupérer l'espace d'abord (cible = racine btrfs avec de l'espace récupérable) */}
+            {/* Case 1 : agrandir la partition dans l'espace non alloué */}
+            <div className="modal-section">
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input type="checkbox" checked={dockerMoveGrow}
+                  onChange={(e) => { setDockerMoveGrow(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, e.target.checked, dockerMoveReclaim); }} />
+                {t('storageSettings.dockerMoveGrow')}
+              </label>
+            </div>
+
+            {/* Case 2 : de l'espace inutilisé (ancienne install) détecté — l'ajouter */}
             {dockerMoveTarget === '/' && diskReclaim && (diskReclaim.reclaimableBytes || 0) > 0 && (
               <div className="modal-section">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                   <input type="checkbox" checked={dockerMoveReclaim}
-                    onChange={(e) => {
-                      const on = e.target.checked;
-                      setDockerMoveReclaim(on);
-                      if (on) setDockerMoveGrow(false); // exclusif avec l'agrandissement
-                      if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, on ? false : dockerMoveGrow, on);
-                    }} />
-                  Récupérer l'espace disque d'abord (anciennes installs + zones libres, +{formatBytes(diskReclaim.reclaimableBytes || 0)}, sans redémarrage)
+                    onChange={(e) => { setDockerMoveReclaim(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, dockerMoveGrow, e.target.checked); }} />
+                  De l'espace inutilisé a été détecté (ancienne installation) — l'ajouter (+{formatBytes(diskReclaim.reclaimableBytes || 0)}, sans redémarrage)
                 </label>
               </div>
             )}
-
-            <div className="modal-section">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: dockerMoveReclaim ? 'not-allowed' : 'pointer', opacity: dockerMoveReclaim ? 0.5 : 1 }}>
-                <input type="checkbox" checked={dockerMoveGrow} disabled={dockerMoveReclaim}
-                  onChange={(e) => { setDockerMoveGrow(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, e.target.checked, false); }} />
-                {t('storageSettings.dockerMoveGrow')}
-              </label>
-            </div>
 
             {dockerMovePrechecking && (
               <div className="modal-section"><FontAwesomeIcon icon={faSpinner} spin /> {t('storageSettings.dockerMoveChecking')}</div>
@@ -2687,11 +2593,8 @@ const StorageSettings = () => {
             {dockerMovePrechecks && !dockerMovePrechecking && (
               <div className="modal-section" style={{ background: '#f8f9fa', padding: '1rem', borderRadius: '6px' }}>
                 <div>{t('storageSettings.dockerMoveRequired')} : <strong>{formatBytes(dockerMovePrechecks.requiredBytes || 0)}</strong> — {t('storageSettings.dockerMoveAvailable')} : <strong>{formatBytes(dockerMovePrechecks.availableBytes || 0)}</strong>
-                  {dockerMoveReclaim && (dockerMovePrechecks.reclaimableBytes || 0) > 0 && (
-                    <span> → <strong style={{ color: '#10b981' }}>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après récupération</span>
-                  )}
-                  {!dockerMoveReclaim && dockerMoveGrow && (dockerMovePrechecks.growableBytes || 0) > 0 && (
-                    <span> → <strong>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après agrandissement</span>
+                  {(dockerMovePrechecks.projectedAvailableBytes || 0) > (dockerMovePrechecks.availableBytes || 0) && (
+                    <span> → <strong style={{ color: '#10b981' }}>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après ajout d'espace</span>
                   )}
                 </div>
                 {dockerMovePrechecks.growPlan && dockerMovePrechecks.growPlan.rebootWillBeRequired && (
@@ -2718,46 +2621,6 @@ const StorageSettings = () => {
         </div>
       )}
 
-      {/* Disk reclaim confirmation modal */}
-      {showReclaimModal && diskReclaim && (
-        <div className="modal-overlay" onClick={() => !reclaimRunning && setShowReclaimModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <h2><FontAwesomeIcon icon={faExpand} /> Récupérer l'espace disque</h2>
-            <div className="modal-section">
-              <p style={{ margin: '0 0 0.5rem' }}>
-                La racine <strong>{diskReclaim.targetMount}</strong> passera de <strong>{formatBytes(diskReclaim.currentSizeBytes || 0)}</strong> à <strong style={{ color: '#10b981' }}>{formatBytes(diskReclaim.projectedSizeBytes || 0)}</strong>.
-              </p>
-              <ul style={{ margin: '0.25rem 0', paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
-                {diskReclaim.items.map((it: any, i: number) => (
-                  <li key={i}>{it.label}{it.device ? ` (${it.device})` : ''} — <strong>{formatBytes(it.sizeBytes || 0)}</strong></li>
-                ))}
-              </ul>
-            </div>
-            <div className="modal-section" style={{ background: '#fff7ed', padding: '1rem', borderRadius: '6px' }}>
-              <p style={{ margin: 0, fontSize: '0.9rem' }}>
-                ⚠️ Les partitions listées seront <strong>effacées</strong> (wipefs) puis ajoutées au système de fichiers racine. Toute donnée qu'elles contiennent encore sera <strong>définitivement perdue</strong>. La racine deviendra un btrfs multi-partitions : garde un accès console/physique au prochain redémarrage.
-              </p>
-            </div>
-            {reclaimLog.length > 0 && (
-              <pre style={{ background: '#0f172a', color: '#e2e8f0', padding: '0.75rem', borderRadius: '6px', fontSize: '0.8rem', maxHeight: '200px', overflow: 'auto' }}>
-                {reclaimLog.join('\n')}
-              </pre>
-            )}
-            <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => setShowReclaimModal(false)} disabled={reclaimRunning}>
-                {reclaimLog.length > 0 && !reclaimRunning ? 'Fermer' : t('storageSettings.cancel')}
-              </button>
-              <button className="btn-danger" style={{ background: '#10b981' }}
-                disabled={reclaimRunning || !diskReclaim.canProceed}
-                onClick={executeDiskReclaim}>
-                {reclaimRunning
-                  ? <><FontAwesomeIcon icon={faSpinner} spin /> Récupération…</>
-                  : <><FontAwesomeIcon icon={faExpand} /> Confirmer la récupération</>}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

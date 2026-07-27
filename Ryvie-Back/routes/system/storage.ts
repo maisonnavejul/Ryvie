@@ -6729,10 +6729,12 @@ const DM_HANDLERS: { [id: string]: () => Promise<void> } = {
 
 function buildDockerMoveSteps(growRequested: boolean, reclaimRequested = false): DockerMoveStep[] {
   const defs: { id: string; name: string }[] = [];
+  // Récupération des anciennes partitions d'abord (à chaud, aucun reboot)...
   if (reclaimRequested) {
-    // La récupération d'espace (btrfs device add) est à chaud : elle remplace l'agrandissement.
-    defs.push({ id: 'reclaim-space', name: 'Récupérer l\'espace disque' });
-  } else if (growRequested) {
+    defs.push({ id: 'reclaim-space', name: 'Récupérer l\'espace inutilisé' });
+  }
+  // ...puis agrandissement dans les zones libres (peut nécessiter un reboot pour la racine).
+  if (growRequested) {
     defs.push({ id: 'grow-partition', name: 'Agrandir la partition cible' });
     defs.push({ id: 'grow-reread', name: 'Relire la table de partition' });
     defs.push({ id: 'grow-btrfs', name: 'Agrandir le système de fichiers' });
@@ -6935,9 +6937,8 @@ router.post('/storage/docker-move-prechecks', authenticateTokenOrFirstTime, asyn
     if (!targetMount || typeof targetMount !== 'string') {
       return res.status(400).json({ success: false, error: 'targetMount requis' });
     }
-    // La récupération est exclusive de l'agrandissement (elle englobe déjà les zones libres).
-    const grow = !!growRequested && !reclaimRequested;
-    const v = await dmValidate(targetMount, grow, !!reclaimRequested);
+    // Agrandissement (zones libres) et récupération (anciennes partitions) sont indépendants.
+    const v = await dmValidate(targetMount, !!growRequested, !!reclaimRequested);
     const dirs = dmComputeTargetDirs(targetMount);
     res.json({
       success: true,
@@ -6971,14 +6972,13 @@ router.post('/storage/docker-move', authenticateTokenOrFirstTime, async (req: an
     if (!targetMount || typeof targetMount !== 'string') {
       return res.status(400).json({ success: false, error: 'targetMount requis' });
     }
-    // La récupération est exclusive de l'agrandissement.
-    const grow = !!growRequested && !reclaimRequested;
-    const v = await dmValidate(targetMount, grow, !!reclaimRequested);
+    // Agrandissement (zones libres) et récupération (anciennes partitions) sont indépendants.
+    const v = await dmValidate(targetMount, !!growRequested, !!reclaimRequested);
     if (!v.canProceed) {
       return res.status(400).json({ success: false, error: 'Pré-vérifications échouées', reasons: v.reasons });
     }
     const dirs = dmComputeTargetDirs(targetMount);
-    const willGrow = grow && !!(v.growPlan && v.growPlan.supported && !v.growPlan.alreadyMax);
+    const willGrow = !!growRequested && !!(v.growPlan && v.growPlan.supported && !v.growPlan.alreadyMax);
     const willReclaim = !!reclaimRequested && v.reclaimableBytes > 0;
 
     dockerMoveState = emptyDockerMoveState();
@@ -7190,10 +7190,8 @@ async function drScan(): Promise<{
       if (p.size < DR_MIN_RECLAIM_BYTES) { skipped.push({ device: dev, sizeBytes: p.size, reason: 'trop petite (récupérable uniquement hors-ligne)' }); continue; }
       items.push({ kind: 'orphan-partition', device: dev, partNum: p.num, sizeBytes: p.size, fsType: bk.type || p.fs || 'inconnu', label: `Ancienne partition ${bk.type || p.fs || ''} orpheline` });
     }
-    for (const fr of info.freeRegions) {
-      if (fr.size < DR_MIN_RECLAIM_BYTES) continue;
-      items.push({ kind: 'free-region', start: fr.start, end: fr.end, sizeBytes: fr.size, label: 'Espace non alloué' });
-    }
+    // NB : l'espace non alloué (free regions) est géré par l'option "Agrandir pour
+    // remplir le disque" (redimensionnement de partition), pas ici.
   }
 
   const reclaimableBytes = items.reduce((a, i) => a + i.sizeBytes, 0);
@@ -7236,31 +7234,11 @@ async function drReclaimRun(add: (m: string) => void): Promise<{ newSizeBytes: n
   const btrfsDevs = await drBtrfsDevices(targetMount);
 
   for (const item of scan.items) {
-    let dev: string | null = null;
-
-    if (item.kind === 'free-region') {
-      // Créer une partition dans la zone libre (alignée sur 1 MiB), puis l'ajouter
-      const MiB = 1024 * 1024;
-      const start = Math.ceil((item.start || 0) / MiB) * MiB;
-      const end = Math.floor((item.end || 0) / MiB) * MiB;
-      if (end - start < DR_MIN_RECLAIM_BYTES) { add(`⏭ Zone libre trop petite après alignement, ignorée`); continue; }
-      const before = new Set(((await drPartedInfo(disk))?.partitions || []).map(p => p.num));
-      add(`🧩 Création d'une partition dans l'espace non alloué (${gib(end - start)})...`);
-      const mk = await executeCommand('sudo', ['-n', 'parted', '-m', '-s', disk, 'unit', 'B', 'mkpart', 'primary', `${start}B`, `${end}B`]);
-      if (mk.exitCode !== 0) { add(`❌ mkpart: ${mk.stderr.trim() || 'échec'}`); continue; }
-      await executeCommand('sudo', ['-n', 'partprobe', disk]);
-      await executeCommand('sudo', ['-n', 'partx', '-a', disk]); // s'assure que le nœud apparaît
-      const after = (await drPartedInfo(disk))?.partitions || [];
-      const newp = after.find(p => !before.has(p.num));
-      if (!newp) { add(`❌ Nouvelle partition introuvable après création`); continue; }
-      dev = dmPartPath(disk, newp.num);
-    } else {
-      dev = item.device!;
-      // Re-validation de sécurité (l'état a pu changer depuis le scan)
-      const bk = await drBlkid(dev);
-      if (btrfsDevs.has(dev) || await drIsMounted(dev) || (!!bk.uuid && fstabUUIDs.has(bk.uuid)) || activeSwaps.has(dev)) {
-        add(`⏭ ${dev} ignorée (devenue occupée depuis l'analyse)`); continue;
-      }
+    const dev = item.device!;
+    // Re-validation de sécurité (l'état a pu changer depuis le scan)
+    const bk = await drBlkid(dev);
+    if (btrfsDevs.has(dev) || await drIsMounted(dev) || (!!bk.uuid && fstabUUIDs.has(bk.uuid)) || activeSwaps.has(dev)) {
+      add(`⏭ ${dev} ignorée (devenue occupée depuis l'analyse)`); continue;
     }
 
     add(`🧹 Effacement de la signature de ${dev}...`);
