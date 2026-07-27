@@ -1041,15 +1041,19 @@ const StorageSettings = () => {
   // Points de montage candidats (dérivés des disques), hors emplacement Docker actuel
   const getCandidateMounts = useCallback((): string[] => {
     const current = dockerLocation?.currentMount;
+    // Points de montage à ne jamais proposer comme cible Docker (EFI, /boot, etc.)
+    const isValidTarget = (mp: string) =>
+      mp && mp.startsWith('/') && mp !== current &&
+      mp !== '/boot' && !mp.startsWith('/boot/');
     const set = new Set<string>();
     (disks || []).forEach((disk: any) => {
       (disk.children || []).forEach((ch: any) => {
         (ch.mountpoints || []).forEach((mp: string) => {
-          if (mp && mp.startsWith('/') && mp !== current) set.add(mp);
+          if (isValidTarget(mp)) set.add(mp);
         });
       });
       (disk.mountpoints || []).forEach((mp: string) => {
-        if (mp && mp.startsWith('/') && mp !== current) set.add(mp);
+        if (isValidTarget(mp)) set.add(mp);
       });
     });
     return Array.from(set).sort();
@@ -2553,7 +2557,11 @@ const StorageSettings = () => {
 
             {dockerMovePrechecks && !dockerMovePrechecking && (
               <div className="modal-section" style={{ background: '#f8f9fa', padding: '1rem', borderRadius: '6px' }}>
-                <div>{t('storageSettings.dockerMoveRequired')} : <strong>{formatBytes(dockerMovePrechecks.requiredBytes || 0)}</strong> — {t('storageSettings.dockerMoveAvailable')} : <strong>{formatBytes(dockerMovePrechecks.availableBytes || 0)}</strong></div>
+                <div>{t('storageSettings.dockerMoveRequired')} : <strong>{formatBytes(dockerMovePrechecks.requiredBytes || 0)}</strong> — {t('storageSettings.dockerMoveAvailable')} : <strong>{formatBytes(dockerMovePrechecks.availableBytes || 0)}</strong>
+                  {dockerMoveGrow && (dockerMovePrechecks.growableBytes || 0) > 0 && (
+                    <span> → <strong>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après agrandissement</span>
+                  )}
+                </div>
                 {dockerMovePrechecks.growPlan && dockerMovePrechecks.growPlan.rebootWillBeRequired && (
                   <div className="storage-alert storage-alert-warning" style={{ marginTop: '0.5rem' }}>{t('storageSettings.dockerMoveRebootWarning')}</div>
                 )}

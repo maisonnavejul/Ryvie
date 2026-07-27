@@ -6370,30 +6370,34 @@ async function dmPartedInfo(disk: string): Promise<PartedInfo | null> {
 async function dmAnalyzeGrow(disk: string, partNum: number): Promise<{
   supported: boolean; reason: string; alreadyMax: boolean;
   swapPartNum: number | null; swapSize: number; table: string;
+  growableBytes: number;
 }> {
   const info = await dmPartedInfo(disk);
-  if (!info) return { supported: false, reason: 'Lecture de la table de partition impossible', alreadyMax: false, swapPartNum: null, swapSize: 0, table: '' };
+  if (!info) return { supported: false, reason: 'Lecture de la table de partition impossible', alreadyMax: false, swapPartNum: null, swapSize: 0, table: '', growableBytes: 0 };
   const target = info.partitions.find(p => p.num === partNum);
-  if (!target) return { supported: false, reason: 'Partition cible introuvable', alreadyMax: false, swapPartNum: null, swapSize: 0, table: info.table };
+  if (!target) return { supported: false, reason: 'Partition cible introuvable', alreadyMax: false, swapPartNum: null, swapSize: 0, table: info.table, growableBytes: 0 };
   const MiB = 1024 * 1024;
   // Partitions situées après la cible
   const after = info.partitions.filter(p => p.start > target.start).sort((a, b) => a.start - b.start);
   const freeTail = info.diskSize - target.end;
   if (after.length === 0) {
-    // Cible = dernière partition
-    if (freeTail < 64 * MiB) return { supported: true, reason: 'Déjà au maximum', alreadyMax: true, swapPartNum: null, swapSize: 0, table: info.table };
-    return { supported: true, reason: '', alreadyMax: false, swapPartNum: null, swapSize: 0, table: info.table };
+    // Cible = dernière partition : on récupère tout l'espace libre en fin de disque
+    if (freeTail < 64 * MiB) return { supported: true, reason: 'Déjà au maximum', alreadyMax: true, swapPartNum: null, swapSize: 0, table: info.table, growableBytes: 0 };
+    return { supported: true, reason: '', alreadyMax: false, swapPartNum: null, swapSize: 0, table: info.table, growableBytes: Math.max(0, freeTail) };
   }
   const next = after[0];
   const isSwap = /swap/i.test(next.fs) || /swap/i.test(next.name);
   const nextIsLast = after.length === 1;
   if (isSwap && nextIsLast && info.table === 'gpt') {
-    return { supported: true, reason: '', alreadyMax: false, swapPartNum: next.num, swapSize: next.size, table: info.table };
+    // Le swap est relocalisé en fin de disque : la cible récupère tout l'espace
+    // qui la suit, moins la taille du swap (qui reste occupée, mais à la fin).
+    const growableBytes = Math.max(0, (info.diskSize - target.end) - next.size);
+    return { supported: true, reason: '', alreadyMax: false, swapPartNum: next.num, swapSize: next.size, table: info.table, growableBytes };
   }
   if (isSwap && info.table !== 'gpt') {
-    return { supported: false, reason: 'Déplacement du swap non supporté sur table msdos (risque partition étendue)', alreadyMax: false, swapPartNum: next.num, swapSize: next.size, table: info.table };
+    return { supported: false, reason: 'Déplacement du swap non supporté sur table msdos (risque partition étendue)', alreadyMax: false, swapPartNum: next.num, swapSize: next.size, table: info.table, growableBytes: 0 };
   }
-  return { supported: false, reason: 'Une partition non-swap suit la cible — agrandissement non sûr', alreadyMax: false, swapPartNum: null, swapSize: 0, table: info.table };
+  return { supported: false, reason: 'Une partition non-swap suit la cible — agrandissement non sûr', alreadyMax: false, swapPartNum: null, swapSize: 0, table: info.table, growableBytes: 0 };
 }
 
 // --- Steps -----------------------------------------------------------------
@@ -6826,6 +6830,7 @@ async function dmValidate(targetMount: string, growRequested: boolean): Promise<
   canProceed: boolean; reasons: string[];
   sourceDockerDir: string; sourceContainerdDir: string;
   requiredBytes: number; availableBytes: number;
+  growableBytes: number; projectedAvailableBytes: number;
   targetDisk: string | null; targetPartNum: number | null; targetIsRoot: boolean;
   growPlan: { supported: boolean; reason: string; rebootWillBeRequired: boolean; swapRelocation: boolean; alreadyMax: boolean } | null;
 }> {
@@ -6846,16 +6851,15 @@ async function dmValidate(targetMount: string, growRequested: boolean): Promise<
   const currentMount = srcMntR.exitCode === 0 ? srcMntR.stdout.trim() : null;
   if (currentMount && currentMount === targetMount) reasons.push(`La cible ${targetMount} héberge déjà le data-root actuel`);
 
-  // Espace
+  // Besoin réel et espace actuellement disponible sur la cible
   const requiredBytes = await dmDirBytes(sourceDockerDir) + await dmDirBytes(sourceContainerdDir);
   const availableBytes = await dmMountAvail(targetMount);
-  if (requiredBytes > 0 && availableBytes < requiredBytes * 1.15) {
-    reasons.push(`Espace insuffisant sur ${targetMount}: ${Math.round(availableBytes / 1e9)} Go dispo, ~${Math.round(requiredBytes * 1.15 / 1e9)} Go requis`);
-  }
 
-  // Analyse device/partition + grow
+  // Analyse device/partition + grow — calculée AVANT le contrôle d'espace pour
+  // pouvoir tenir compte de la place récupérée par un éventuel agrandissement.
   let targetDisk: string | null = null, targetPartNum: number | null = null, targetIsRoot = false;
   let growPlan = null;
+  let growableBytes = 0;
   if (srcDev) {
     const split = dmSplitDevice(srcDev);
     if (split) { targetDisk = split.disk; targetPartNum = split.partNum; }
@@ -6871,15 +6875,25 @@ async function dmValidate(targetMount: string, growRequested: boolean): Promise<
           swapRelocation: a.swapPartNum !== null,
           alreadyMax: a.alreadyMax
         };
+        // On ne compte la place gagnée que si l'agrandissement est réellement possible.
+        if (a.supported && !a.alreadyMax) growableBytes = a.growableBytes;
         if (!a.supported) reasons.push(`Agrandissement impossible: ${a.reason}`);
       }
     }
+  }
+
+  // Espace projeté = dispo actuel + place récupérée par l'agrandissement.
+  const projectedAvailableBytes = availableBytes + growableBytes;
+  if (requiredBytes > 0 && projectedAvailableBytes < requiredBytes * 1.15) {
+    const suffix = growableBytes > 0 ? ' même après agrandissement' : '';
+    reasons.push(`Espace insuffisant sur ${targetMount}${suffix}: ${Math.round(projectedAvailableBytes / 1e9)} Go dispo, ~${Math.round(requiredBytes * 1.15 / 1e9)} Go requis`);
   }
 
   return {
     canProceed: reasons.length === 0, reasons,
     sourceDockerDir, sourceContainerdDir,
     requiredBytes, availableBytes,
+    growableBytes, projectedAvailableBytes,
     targetDisk, targetPartNum, targetIsRoot, growPlan
   };
 }
@@ -6902,6 +6916,8 @@ router.post('/storage/docker-move-prechecks', authenticateTokenOrFirstTime, asyn
       reasons: v.reasons,
       requiredBytes: v.requiredBytes,
       availableBytes: v.availableBytes,
+      growableBytes: v.growableBytes,
+      projectedAvailableBytes: v.projectedAvailableBytes,
       targetDockerDir: dirs.docker,
       targetContainerdDir: dirs.containerd,
       growPlan: v.growPlan,
