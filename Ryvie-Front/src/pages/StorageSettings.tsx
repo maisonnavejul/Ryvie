@@ -2566,27 +2566,14 @@ const StorageSettings = () => {
               </div>
             </div>
 
-            {/* Case 1 : remplir le disque avec l'espace non alloué (nouvelle partition + btrfs add) */}
-            {dockerMoveTarget === '/' && diskReclaim && (diskReclaim.freeSpaceBytes || 0) > 0 && (
-              <div className="modal-section">
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={dockerMoveGrow}
-                    onChange={(e) => { setDockerMoveGrow(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, e.target.checked, dockerMoveReclaim); }} />
-                  Utiliser l'espace libre du disque pour agrandir (+{formatBytes(diskReclaim.freeSpaceBytes || 0)}, sans redémarrage)
-                </label>
-              </div>
-            )}
-
-            {/* Case 2 : de l'espace inutilisé (ancienne install) détecté, l'ajouter */}
-            {dockerMoveTarget === '/' && diskReclaim && (diskReclaim.orphanBytes || 0) > 0 && (
-              <div className="modal-section">
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={dockerMoveReclaim}
-                    onChange={(e) => { setDockerMoveReclaim(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, dockerMoveGrow, e.target.checked); }} />
-                  De l'espace inutilisé a été détecté (ancienne installation). L'ajouter (+{formatBytes(diskReclaim.orphanBytes || 0)}, sans redémarrage)
-                </label>
-              </div>
-            )}
+            {/* Agrandir la partition racine dans l'espace libre adjacent (resize + reboot) */}
+            <div className="modal-section">
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input type="checkbox" checked={dockerMoveGrow}
+                  onChange={(e) => { setDockerMoveGrow(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, e.target.checked); }} />
+                {t('storageSettings.dockerMoveGrow')}
+              </label>
+            </div>
 
             {dockerMovePrechecking && (
               <div className="modal-section"><FontAwesomeIcon icon={faSpinner} spin /> {t('storageSettings.dockerMoveChecking')}</div>
@@ -2596,9 +2583,14 @@ const StorageSettings = () => {
               <div className="modal-section" style={{ background: '#f8f9fa', padding: '1rem', borderRadius: '6px' }}>
                 <div>{t('storageSettings.dockerMoveRequired')} : <strong>{formatBytes(dockerMovePrechecks.requiredBytes || 0)}</strong> · {t('storageSettings.dockerMoveAvailable')} : <strong>{formatBytes(dockerMovePrechecks.availableBytes || 0)}</strong>
                   {(dockerMovePrechecks.projectedAvailableBytes || 0) > (dockerMovePrechecks.availableBytes || 0) && (
-                    <span> → <strong style={{ color: '#10b981' }}>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après ajout d'espace</span>
+                    <span> → <strong style={{ color: '#10b981' }}>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après agrandissement</span>
                   )}
                 </div>
+                {dockerMovePrechecks.growPlan && dockerMovePrechecks.growPlan.rebootWillBeRequired && (
+                  <div className="storage-alert storage-alert-warning" style={{ marginTop: '0.5rem' }}>
+                    ⚠️ Un redémarrage sera nécessaire pour agrandir la partition racine montée. La reprise est automatique après le reboot.
+                  </div>
+                )}
                 {dockerMovePrechecks.reasons && dockerMovePrechecks.reasons.length > 0 && (
                   <ul style={{ color: '#ef4444', margin: '0.5rem 0 0', paddingLeft: '1.2rem' }}>
                     {dockerMovePrechecks.reasons.map((r: string, i: number) => <li key={i}>{r}</li>)}

@@ -6191,6 +6191,7 @@ interface DockerMoveState {
   // Agrandissement / récupération d'espace
   growRequested: boolean;
   reclaimRequested: boolean;
+  recreateSwapSize: number; // taille (octets) du swap à recréer en swapfile après reboot (0 = aucun)
   targetDisk: string | null;
   targetPartNum: number | null;
   partTable: 'msdos' | 'gpt' | null;
@@ -6220,7 +6221,7 @@ function emptyDockerMoveState(): DockerMoveState {
     id: null, status: 'idle',
     sourceDockerDir: '/data/docker', sourceContainerdDir: '/data/containerd',
     targetMount: '', targetDockerDir: '', targetContainerdDir: '',
-    growRequested: false, reclaimRequested: false, targetDisk: null, targetPartNum: null, partTable: null, targetIsRoot: false,
+    growRequested: false, reclaimRequested: false, recreateSwapSize: 0, targetDisk: null, targetPartNum: null, partTable: null, targetIsRoot: false,
     resumePhase: 'START', rebootExpected: false, rebootCount: 0,
     preEngineId: null, preContainerCount: null,
     currentStep: -1, totalSteps: 0, steps: [], globalProgress: 0,
@@ -6414,12 +6415,16 @@ async function dmReclaimSpace(): Promise<void> {
   setStepDM('reclaim-space', { status: 'completed', message: `Racine agrandie à ${gib} GiB`, progress: 100 });
 }
 
-// Agrandit la partition cible (relocalise le swap en fin de disque si nécessaire).
+// Agrandit la partition cible dans l'espace libre ADJACENT, via growpart (méthode
+// sûre : préserve le secteur de départ, comme sur les cloud VMs). Si un swap suit
+// la cible, il est supprimé pour libérer l'espace (recréé en swapfile APRÈS le
+// reboot, cf. dmGrowBtrfs). Toutes les modifs de table se font AVANT le reboot ;
+// le noyau relit la nouvelle taille au démarrage.
 async function dmGrowPartition(): Promise<void> {
   const st = dockerMoveState;
   setStepDM('grow-partition', { status: 'running', message: 'Analyse de la partition cible...', progress: 10 });
   const disk = st.targetDisk!; const partNum = st.targetPartNum!;
-  const MiB = 1024 * 1024;
+  const part = dmPartPath(disk, partNum);
   const analysis = await dmAnalyzeGrow(disk, partNum);
   st.partTable = (analysis.table === 'msdos' || analysis.table === 'gpt') ? analysis.table : st.partTable;
   if (!analysis.supported) throw new Error(`Agrandissement impossible: ${analysis.reason}`);
@@ -6429,72 +6434,60 @@ async function dmGrowPartition(): Promise<void> {
     return;
   }
 
-  const info = await dmPartedInfo(disk);
-  if (!info) throw new Error('Lecture parted impossible');
-  const target = info.partitions.find(p => p.num === partNum)!;
+  // growpart requis (redimensionnement sûr, préserve le début de partition)
+  const gpCheck = await executeCommand('sh', ['-c', 'command -v growpart || true']);
+  if (!gpCheck.stdout.trim()) {
+    throw new Error('growpart introuvable — installer le paquet cloud-guest-utils (sudo apt-get install -y cloud-guest-utils)');
+  }
 
+  // Secteur de départ AVANT (garde-fou anti-corruption : doit rester identique)
+  const partBase = part.replace('/dev/', '');
+  const startBefore = parseInt((await executeCommand('cat', [`/sys/class/block/${partBase}/start`])).stdout.trim()) || 0;
+
+  // Un swap suit la cible : on le supprime pour libérer l'espace adjacent.
   if (analysis.swapPartNum !== null && analysis.swapSize > 0) {
-    // Relocalisation du swap (GPT, swap juste après la cible et dernière partition)
     const swapPart = dmPartPath(disk, analysis.swapPartNum);
-    // Idempotence: si la partition swap actuelle commence déjà juste après une cible agrandie, ne rien faire
-    logDM(`Déplacement du swap ${swapPart} en fin de disque...`, 'info');
-    setStepDM('grow-partition', { message: 'Déplacement du swap...', progress: 25 });
-    await executeCommand('sudo', ['-n', 'swapoff', swapPart]);
-    // Retirer la ligne swap de /etc/fstab (par UUID du device)
+    logDM(`Libération du swap ${swapPart} (sera recréé en swapfile après reboot)...`, 'info');
+    setStepDM('grow-partition', { message: 'Libération du swap...', progress: 25 });
+    await executeCommand('sudo', ['-n', 'swapoff', swapPart]); // ignore l'erreur si déjà off
+    // Retirer la ligne swap de /etc/fstab (par UUID)
     try {
       const uuidR = await executeCommand('sudo', ['-n', 'blkid', '-o', 'value', '-s', 'UUID', swapPart]);
       const oldUuid = uuidR.stdout.trim();
       if (oldUuid) {
         const fstab = await executeCommand('cat', ['/etc/fstab']);
         const fs = require('fs');
-        const filtered = fstab.stdout.split('\n').filter(l => !l.includes(oldUuid)).join('\n') + '\n';
+        const filtered = fstab.stdout.split('\n').filter(l => !l.includes(oldUuid)).join('\n').replace(/\n+$/, '\n');
         const tmp = '/tmp/fstab.dm.new';
         fs.writeFileSync(tmp, filtered);
         await executeCommand('sudo', ['-n', 'cp', tmp, '/etc/fstab']);
         fs.unlinkSync(tmp);
       }
     } catch (e: any) { logDM(`Avert. nettoyage fstab swap: ${e.message}`, 'warning'); }
-    // Supprimer l'ancienne partition swap
     await executeCommandStrict('sudo', ['-n', 'sgdisk', '-d', String(analysis.swapPartNum), disk], 'sgdisk delete swap');
-    // Agrandir la cible en laissant swapSize à la fin
-    const newTargetEndMiB = Math.floor((info.diskSize - analysis.swapSize) / MiB) - 1;
-    setStepDM('grow-partition', { message: 'Agrandissement de la partition...', progress: 55 });
-    await executeCommandStrict('sudo', ['-n', 'parted', '-s', disk, 'resizepart', String(partNum), `${newTargetEndMiB}MiB`], 'resizepart');
-    // Recréer le swap en fin de disque (type 8200)
-    await executeCommandStrict('sudo', ['-n', 'sgdisk', '-n', `${analysis.swapPartNum}:${newTargetEndMiB + 1}MiB:0`, '-t', `${analysis.swapPartNum}:8200`, '-c', `${analysis.swapPartNum}:swap`, disk], 'sgdisk recreate swap');
-    await executeCommand('sudo', ['-n', 'partprobe', disk]);
-    await executeCommand('sudo', ['-n', 'udevadm', 'settle', '--timeout=10']);
-    const newSwap = dmPartPath(disk, analysis.swapPartNum);
-    await executeCommandStrict('sudo', ['-n', 'mkswap', newSwap], 'mkswap');
-    await executeCommand('sudo', ['-n', 'swapon', newSwap]);
-    // Réécrire fstab avec le nouvel UUID
-    try {
-      const uuidR = await executeCommand('sudo', ['-n', 'blkid', '-o', 'value', '-s', 'UUID', newSwap]);
-      const newUuid = uuidR.stdout.trim();
-      if (newUuid) {
-        const fstab = await executeCommand('cat', ['/etc/fstab']);
-        const fs = require('fs');
-        const content = fstab.stdout.replace(/\n+$/, '\n') + `UUID=${newUuid} none swap sw 0 0\n`;
-        const tmp = '/tmp/fstab.dm2.new';
-        fs.writeFileSync(tmp, content);
-        await executeCommand('sudo', ['-n', 'cp', tmp, '/etc/fstab']);
-        fs.unlinkSync(tmp);
-      }
-    } catch (e: any) { logDM(`Avert. écriture fstab swap: ${e.message}`, 'warning'); }
-    logDM('✓ Swap relocalisé en fin de disque', 'success');
-  } else {
-    // Cible = dernière partition, juste agrandir à 100%
-    // Idempotence: si déjà quasi à la taille disque, sauter
-    if (info.diskSize - target.end < 64 * MiB) {
-      setStepDM('grow-partition', { status: 'skipped', message: 'Déjà au maximum', progress: 100 });
-      return;
-    }
-    setStepDM('grow-partition', { message: 'Agrandissement de la partition...', progress: 55 });
-    await executeCommandStrict('sudo', ['-n', 'parted', '-s', disk, 'resizepart', String(partNum), '100%'], 'resizepart');
+    st.recreateSwapSize = analysis.swapSize; // recréé en swapfile après le reboot
+    await persistDockerMoveState(st);
   }
-  await executeCommand('sudo', ['-n', 'partprobe', disk]);
+
+  // Agrandir la partition dans tout l'espace libre adjacent (growpart)
+  setStepDM('grow-partition', { message: 'Agrandissement de la partition (growpart)...', progress: 55 });
+  const gp = await executeCommand('sudo', ['-n', 'growpart', disk, String(partNum)]);
+  const gpOut = `${gp.stdout} ${gp.stderr}`.trim();
+  if (gp.exitCode !== 0 && !/NOCHANGE/i.test(gpOut)) {
+    throw new Error(`growpart a échoué: ${gpOut || 'erreur inconnue'}`);
+  }
+  logDM(`growpart: ${gpOut.split('\n').pop() || 'ok'}`, 'info');
+
+  // GARDE-FOU : le secteur de départ NE DOIT PAS avoir changé (sinon corruption)
+  const infoAfter = await dmPartedInfo(disk);
+  const startAfterBytes = infoAfter?.partitions.find(p => p.num === partNum)?.start;
+  if (startAfterBytes !== undefined && startBefore > 0 && Math.abs(Math.floor(startAfterBytes / 512) - startBefore) > 2) {
+    throw new Error(`SÉCURITÉ: le secteur de départ de ${part} a changé (${startBefore} → ${Math.floor(startAfterBytes / 512)}) — abandon avant tout dommage`);
+  }
+
+  await executeCommand('sudo', ['-n', 'partprobe', disk]); // avertit sur racine montée, sans gravité
   await executeCommand('sudo', ['-n', 'udevadm', 'settle', '--timeout=10']);
-  logDM('✓ Partition agrandie', 'success');
+  logDM('✓ Partition agrandie (début préservé)', 'success');
   setStepDM('grow-partition', { status: 'completed', message: 'Partition agrandie', progress: 100 });
 }
 
@@ -6545,7 +6538,8 @@ async function dmGrowReread(): Promise<void> {
   throw new RebootRequested('reboot scheduled');
 }
 
-// Agrandit le système de fichiers btrfs de la cible (online).
+// Agrandit le système de fichiers btrfs de la cible (online), puis recrée le swap
+// en swapfile s'il avait été supprimé pour l'agrandissement.
 async function dmGrowBtrfs(): Promise<void> {
   const st = dockerMoveState;
   setStepDM('grow-btrfs', { status: 'running', message: 'Agrandissement du système de fichiers...', progress: 40 });
@@ -6554,7 +6548,49 @@ async function dmGrowBtrfs(): Promise<void> {
     throw new Error(`btrfs resize a échoué: ${r.stderr.trim()}`);
   }
   logDM(`✓ Système de fichiers ${st.targetMount} agrandi`, 'success');
+  // Recréer le swap (supprimé pour libérer l'espace) en swapfile — best effort.
+  if (st.recreateSwapSize && st.recreateSwapSize > 0) {
+    setStepDM('grow-btrfs', { message: 'Recréation du swap (swapfile)...', progress: 70 });
+    try { await dmRecreateSwapfile(st.recreateSwapSize); }
+    catch (e: any) { logDM(`Swap non recréé (${e.message}) — la machine tourne sans swap, tu peux en ajouter un plus tard`, 'warning'); }
+    st.recreateSwapSize = 0;
+    await persistDockerMoveState(st);
+  }
   setStepDM('grow-btrfs', { status: 'completed', message: 'Système de fichiers agrandi', progress: 100 });
+}
+
+// Recrée un swap en swapfile (la partition swap ayant été supprimée pour l'agrandissement).
+// Sur btrfs, un swapfile exige NOCOW ; on privilégie `btrfs filesystem mkswapfile`.
+async function dmRecreateSwapfile(sizeBytes: number): Promise<void> {
+  const sizeMiB = Math.max(512, Math.round(sizeBytes / (1024 * 1024)));
+  const path = '/swapfile';
+  logDM(`Recréation du swap en swapfile (${sizeMiB} MiB)...`, 'info');
+  await executeCommand('sudo', ['-n', 'swapoff', path]); // au cas où (idempotence)
+  const mksf = await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'mkswapfile', '--size', `${sizeMiB}m`, path]);
+  if (mksf.exitCode !== 0) {
+    // Fallback manuel : fichier NOCOW rempli avec dd (pas fallocate sur btrfs)
+    await executeCommand('sudo', ['-n', 'rm', '-f', path]);
+    await executeCommand('sudo', ['-n', 'truncate', '-s', '0', path]);
+    await executeCommand('sudo', ['-n', 'chattr', '+C', path]);
+    const dd = await executeCommand('sudo', ['-n', 'dd', 'if=/dev/zero', `of=${path}`, 'bs=1M', `count=${sizeMiB}`, 'status=none']);
+    if (dd.exitCode !== 0) throw new Error('dd swapfile KO');
+    await executeCommand('sudo', ['-n', 'chmod', '600', path]);
+    const mk = await executeCommand('sudo', ['-n', 'mkswap', path]);
+    if (mk.exitCode !== 0) throw new Error('mkswap KO');
+  }
+  const on = await executeCommand('sudo', ['-n', 'swapon', path]);
+  if (on.exitCode !== 0) throw new Error(`swapon KO: ${on.stderr.trim()}`);
+  // fstab (par chemin ; un swapfile n'a pas d'UUID)
+  const fstab = await executeCommand('cat', ['/etc/fstab']);
+  if (!new RegExp(`^\\s*${path}\\s`, 'm').test(fstab.stdout)) {
+    const fs = require('fs');
+    const content = fstab.stdout.replace(/\n+$/, '\n') + `${path} none swap sw 0 0\n`;
+    const tmp = '/tmp/fstab.swapfile.new';
+    fs.writeFileSync(tmp, content);
+    await executeCommand('sudo', ['-n', 'cp', tmp, '/etc/fstab']);
+    fs.unlinkSync(tmp);
+  }
+  logDM('✓ Swap recréé en swapfile', 'success');
 }
 
 async function dmPrepareTarget(): Promise<void> {
@@ -6731,10 +6767,11 @@ const DM_HANDLERS: { [id: string]: () => Promise<void> } = {
 
 function buildDockerMoveSteps(growRequested: boolean, reclaimRequested = false): DockerMoveStep[] {
   const defs: { id: string; name: string }[] = [];
-  // Ajout d'espace à chaud (zones libres et/ou anciennes partitions) via btrfs device add.
-  // Une seule étape, aucun reboot, aucune modification de la partition racine montée.
-  if (growRequested || reclaimRequested) {
-    defs.push({ id: 'reclaim-space', name: 'Ajouter l\'espace disque' });
+  // Agrandissement single-partition : resize (growpart) + reboot pour la relecture noyau + resize btrfs.
+  if (growRequested) {
+    defs.push({ id: 'grow-partition', name: 'Agrandir la partition cible' });
+    defs.push({ id: 'grow-reread', name: 'Relire la table de partition' });
+    defs.push({ id: 'grow-btrfs', name: 'Agrandir le système de fichiers' });
   }
   defs.push({ id: 'move-prepare', name: 'Préparer la cible' });
   defs.push({ id: 'move-stop', name: 'Arrêter Docker & containerd' });
@@ -6868,36 +6905,38 @@ async function dmValidate(targetMount: string, growRequested: boolean, reclaimRe
   const requiredBytes = await dmDirBytes(sourceDockerDir) + await dmDirBytes(sourceContainerdDir);
   const availableBytes = await dmMountAvail(targetMount);
 
+  // Analyse de l'agrandissement de la partition (resize dans l'espace libre adjacent).
+  // On agrandit la PARTITION racine (single-partition, reboot pour la relecture noyau).
   let targetDisk: string | null = null, targetPartNum: number | null = null, targetIsRoot = false;
+  let growPlan = null;
+  let growableBytes = 0;
+  const reclaimableBytes = 0;
   if (srcDev) {
     const split = dmSplitDevice(srcDev);
     if (split) { targetDisk = split.disk; targetPartNum = split.partNum; }
     targetIsRoot = targetMount === '/';
-  }
-
-  // Agrandissement (zones non allouées) et récupération (anciennes partitions) se font
-  // TOUS DEUX à chaud via `btrfs device add` (nouvelle partition pour le libre, ajout
-  // direct pour l'orpheline). On ne redimensionne JAMAIS la racine montée → pas de reboot.
-  let growableBytes = 0;    // espace libre (option "Agrandir pour remplir le disque")
-  let reclaimableBytes = 0; // anciennes partitions (option "espace inutilisé")
-  if ((growRequested || reclaimRequested) && targetMount === '/') {
-    try {
-      const scan = await drScan();
-      if (scan.fsType === 'btrfs') {
-        if (growRequested) growableBytes = scan.freeSpaceBytes;
-        if (reclaimRequested) reclaimableBytes = scan.orphanBytes;
+    if (growRequested) {
+      if (!split) {
+        growPlan = { supported: false, reason: 'Device cible non partitionnable (RAID/LVM ?)', rebootWillBeRequired: false, swapRelocation: false, alreadyMax: false };
+        reasons.push('Agrandissement impossible: device cible non partitionnable');
       } else {
-        reasons.push('Ajout d\'espace impossible: la racine n\'est pas en btrfs');
+        const a = await dmAnalyzeGrow(split.disk, split.partNum);
+        growPlan = {
+          supported: a.supported, reason: a.reason,
+          rebootWillBeRequired: a.supported && !a.alreadyMax && targetIsRoot,
+          swapRelocation: a.swapPartNum !== null,
+          alreadyMax: a.alreadyMax
+        };
+        if (a.supported && !a.alreadyMax) growableBytes = a.growableBytes;
+        if (!a.supported) reasons.push(`Agrandissement impossible: ${a.reason}`);
       }
-    } catch (e: any) {
-      reasons.push(`Analyse de l'espace disque impossible: ${e.message}`);
     }
   }
 
-  // Espace projeté = dispo actuel + espace ajouté (agrandissement et/ou récupération).
-  const projectedAvailableBytes = availableBytes + growableBytes + reclaimableBytes;
+  // Espace projeté = dispo actuel + place récupérée par l'agrandissement.
+  const projectedAvailableBytes = availableBytes + growableBytes;
   if (requiredBytes > 0 && projectedAvailableBytes < requiredBytes * 1.15) {
-    const suffix = (growableBytes + reclaimableBytes) > 0 ? ' même après ajout d\'espace' : '';
+    const suffix = growableBytes > 0 ? ' même après agrandissement' : '';
     reasons.push(`Espace insuffisant sur ${targetMount}${suffix}: ${Math.round(projectedAvailableBytes / 1e9)} Go dispo, ~${Math.round(requiredBytes * 1.15 / 1e9)} Go requis`);
   }
 
@@ -6906,7 +6945,7 @@ async function dmValidate(targetMount: string, growRequested: boolean, reclaimRe
     sourceDockerDir, sourceContainerdDir,
     requiredBytes, availableBytes,
     growableBytes, reclaimableBytes, projectedAvailableBytes,
-    targetDisk, targetPartNum, targetIsRoot, growPlan: null
+    targetDisk, targetPartNum, targetIsRoot, growPlan
   };
 }
 
@@ -6955,14 +6994,13 @@ router.post('/storage/docker-move', authenticateTokenOrFirstTime, async (req: an
     if (!targetMount || typeof targetMount !== 'string') {
       return res.status(400).json({ success: false, error: 'targetMount requis' });
     }
-    // Agrandissement (zones libres) et récupération (anciennes partitions) sont indépendants.
-    const v = await dmValidate(targetMount, !!growRequested, !!reclaimRequested);
+    const v = await dmValidate(targetMount, !!growRequested);
     if (!v.canProceed) {
       return res.status(400).json({ success: false, error: 'Pré-vérifications échouées', reasons: v.reasons });
     }
     const dirs = dmComputeTargetDirs(targetMount);
-    const willGrow = !!growRequested && v.growableBytes > 0;
-    const willReclaim = !!reclaimRequested && v.reclaimableBytes > 0;
+    const willGrow = !!growRequested && !!(v.growPlan && v.growPlan.supported && !v.growPlan.alreadyMax);
+    const willReclaim = false;
 
     dockerMoveState = emptyDockerMoveState();
     dockerMoveState.id = `dmove-${Date.now()}`;
