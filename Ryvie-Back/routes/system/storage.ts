@@ -6406,8 +6406,10 @@ async function dmAnalyzeGrow(disk: string, partNum: number): Promise<{
 // Récupère l'espace disque (anciennes installs + zones libres) à chaud via
 // btrfs device add, AVANT la copie Docker. Aucun reboot nécessaire.
 async function dmReclaimSpace(): Promise<void> {
-  setStepDM('reclaim-space', { status: 'running', message: 'Récupération de l\'espace (btrfs device add)...', progress: 20 });
-  const result = await drReclaimRun((m) => logDM(m, 'info'));
+  const st = dockerMoveState;
+  setStepDM('reclaim-space', { status: 'running', message: 'Ajout de l\'espace (btrfs device add)...', progress: 20 });
+  // growRequested → espace non alloué ; reclaimRequested → anciennes partitions.
+  const result = await drReclaimRun((m) => logDM(m, 'info'), { free: !!st.growRequested, orphans: !!st.reclaimRequested });
   const gib = (result.newSizeBytes / (1024 ** 3)).toFixed(1);
   setStepDM('reclaim-space', { status: 'completed', message: `Racine agrandie à ${gib} GiB`, progress: 100 });
 }
@@ -6729,15 +6731,10 @@ const DM_HANDLERS: { [id: string]: () => Promise<void> } = {
 
 function buildDockerMoveSteps(growRequested: boolean, reclaimRequested = false): DockerMoveStep[] {
   const defs: { id: string; name: string }[] = [];
-  // Récupération des anciennes partitions d'abord (à chaud, aucun reboot)...
-  if (reclaimRequested) {
-    defs.push({ id: 'reclaim-space', name: 'Récupérer l\'espace inutilisé' });
-  }
-  // ...puis agrandissement dans les zones libres (peut nécessiter un reboot pour la racine).
-  if (growRequested) {
-    defs.push({ id: 'grow-partition', name: 'Agrandir la partition cible' });
-    defs.push({ id: 'grow-reread', name: 'Relire la table de partition' });
-    defs.push({ id: 'grow-btrfs', name: 'Agrandir le système de fichiers' });
+  // Ajout d'espace à chaud (zones libres et/ou anciennes partitions) via btrfs device add.
+  // Une seule étape, aucun reboot, aucune modification de la partition racine montée.
+  if (growRequested || reclaimRequested) {
+    defs.push({ id: 'reclaim-space', name: 'Ajouter l\'espace disque' });
   }
   defs.push({ id: 'move-prepare', name: 'Préparer la cible' });
   defs.push({ id: 'move-stop', name: 'Arrêter Docker & containerd' });
@@ -6871,50 +6868,36 @@ async function dmValidate(targetMount: string, growRequested: boolean, reclaimRe
   const requiredBytes = await dmDirBytes(sourceDockerDir) + await dmDirBytes(sourceContainerdDir);
   const availableBytes = await dmMountAvail(targetMount);
 
-  // Analyse device/partition + grow — calculée AVANT le contrôle d'espace pour
-  // pouvoir tenir compte de la place récupérée par un éventuel agrandissement.
   let targetDisk: string | null = null, targetPartNum: number | null = null, targetIsRoot = false;
-  let growPlan = null;
-  let growableBytes = 0;
   if (srcDev) {
     const split = dmSplitDevice(srcDev);
     if (split) { targetDisk = split.disk; targetPartNum = split.partNum; }
     targetIsRoot = targetMount === '/';
-    if (growRequested) {
-      if (!split) {
-        growPlan = { supported: false, reason: 'Device cible non partitionnable (RAID/LVM ?)', rebootWillBeRequired: false, swapRelocation: false, alreadyMax: false };
-      } else {
-        const a = await dmAnalyzeGrow(split.disk, split.partNum);
-        growPlan = {
-          supported: a.supported, reason: a.reason,
-          rebootWillBeRequired: a.supported && !a.alreadyMax && targetIsRoot,
-          swapRelocation: a.swapPartNum !== null,
-          alreadyMax: a.alreadyMax
-        };
-        // On ne compte la place gagnée que si l'agrandissement est réellement possible.
-        if (a.supported && !a.alreadyMax) growableBytes = a.growableBytes;
-        if (!a.supported) reasons.push(`Agrandissement impossible: ${a.reason}`);
-      }
-    }
   }
 
-  // Espace récupérable à chaud (btrfs device add des anciennes installs + zones libres).
-  // Uniquement pour la racine btrfs ; exclusif avec l'agrandissement.
-  let reclaimableBytes = 0;
-  if (reclaimRequested && targetMount === '/') {
+  // Agrandissement (zones non allouées) et récupération (anciennes partitions) se font
+  // TOUS DEUX à chaud via `btrfs device add` (nouvelle partition pour le libre, ajout
+  // direct pour l'orpheline). On ne redimensionne JAMAIS la racine montée → pas de reboot.
+  let growableBytes = 0;    // espace libre (option "Agrandir pour remplir le disque")
+  let reclaimableBytes = 0; // anciennes partitions (option "espace inutilisé")
+  if ((growRequested || reclaimRequested) && targetMount === '/') {
     try {
       const scan = await drScan();
-      if (scan.fsType === 'btrfs') reclaimableBytes = scan.reclaimableBytes;
-      else reasons.push('Récupération impossible: la racine n\'est pas en btrfs');
+      if (scan.fsType === 'btrfs') {
+        if (growRequested) growableBytes = scan.freeSpaceBytes;
+        if (reclaimRequested) reclaimableBytes = scan.orphanBytes;
+      } else {
+        reasons.push('Ajout d\'espace impossible: la racine n\'est pas en btrfs');
+      }
     } catch (e: any) {
-      reasons.push(`Analyse de récupération impossible: ${e.message}`);
+      reasons.push(`Analyse de l'espace disque impossible: ${e.message}`);
     }
   }
 
-  // Espace projeté = dispo actuel + place récupérée (agrandissement OU récupération).
+  // Espace projeté = dispo actuel + espace ajouté (agrandissement et/ou récupération).
   const projectedAvailableBytes = availableBytes + growableBytes + reclaimableBytes;
   if (requiredBytes > 0 && projectedAvailableBytes < requiredBytes * 1.15) {
-    const suffix = (growableBytes + reclaimableBytes) > 0 ? ' même après récupération d\'espace' : '';
+    const suffix = (growableBytes + reclaimableBytes) > 0 ? ' même après ajout d\'espace' : '';
     reasons.push(`Espace insuffisant sur ${targetMount}${suffix}: ${Math.round(projectedAvailableBytes / 1e9)} Go dispo, ~${Math.round(requiredBytes * 1.15 / 1e9)} Go requis`);
   }
 
@@ -6923,7 +6906,7 @@ async function dmValidate(targetMount: string, growRequested: boolean, reclaimRe
     sourceDockerDir, sourceContainerdDir,
     requiredBytes, availableBytes,
     growableBytes, reclaimableBytes, projectedAvailableBytes,
-    targetDisk, targetPartNum, targetIsRoot, growPlan
+    targetDisk, targetPartNum, targetIsRoot, growPlan: null
   };
 }
 
@@ -6978,7 +6961,7 @@ router.post('/storage/docker-move', authenticateTokenOrFirstTime, async (req: an
       return res.status(400).json({ success: false, error: 'Pré-vérifications échouées', reasons: v.reasons });
     }
     const dirs = dmComputeTargetDirs(targetMount);
-    const willGrow = !!growRequested && !!(v.growPlan && v.growPlan.supported && !v.growPlan.alreadyMax);
+    const willGrow = !!growRequested && v.growableBytes > 0;
     const willReclaim = !!reclaimRequested && v.reclaimableBytes > 0;
 
     dockerMoveState = emptyDockerMoveState();
@@ -7153,7 +7136,7 @@ interface DrItem {
 async function drScan(): Promise<{
   canProceed: boolean; reasons: string[]; warnings: string[];
   targetMount: string; targetDevice: string | null; disk: string | null; fsType: string;
-  currentSizeBytes: number; reclaimableBytes: number; projectedSizeBytes: number;
+  currentSizeBytes: number; reclaimableBytes: number; freeSpaceBytes: number; orphanBytes: number; projectedSizeBytes: number;
   items: DrItem[]; skipped: { device?: string; sizeBytes: number; reason: string }[];
 }> {
   const reasons: string[] = []; const warnings: string[] = [];
@@ -7190,11 +7173,16 @@ async function drScan(): Promise<{
       if (p.size < DR_MIN_RECLAIM_BYTES) { skipped.push({ device: dev, sizeBytes: p.size, reason: 'trop petite (récupérable uniquement hors-ligne)' }); continue; }
       items.push({ kind: 'orphan-partition', device: dev, partNum: p.num, sizeBytes: p.size, fsType: bk.type || p.fs || 'inconnu', label: `Ancienne partition ${bk.type || p.fs || ''} orpheline` });
     }
-    // NB : l'espace non alloué (free regions) est géré par l'option "Agrandir pour
-    // remplir le disque" (redimensionnement de partition), pas ici.
+    // Zones non allouées : chacune deviendra une nouvelle partition ajoutée à la racine.
+    for (const fr of info.freeRegions) {
+      if (fr.size < DR_MIN_RECLAIM_BYTES) continue;
+      items.push({ kind: 'free-region', start: fr.start, end: fr.end, sizeBytes: fr.size, label: 'Espace non alloué' });
+    }
   }
 
-  const reclaimableBytes = items.reduce((a, i) => a + i.sizeBytes, 0);
+  const orphanBytes = items.filter(i => i.kind === 'orphan-partition').reduce((a, i) => a + i.sizeBytes, 0);
+  const freeSpaceBytes = items.filter(i => i.kind === 'free-region').reduce((a, i) => a + i.sizeBytes, 0);
+  const reclaimableBytes = orphanBytes + freeSpaceBytes;
   const curR = await executeCommand('findmnt', ['-bno', 'SIZE', targetMount]);
   const currentSizeBytes = curR.exitCode === 0 ? (parseInt(curR.stdout.trim()) || 0) : 0;
 
@@ -7204,7 +7192,7 @@ async function drScan(): Promise<{
   return {
     canProceed: reasons.length === 0 && items.length > 0, reasons, warnings,
     targetMount, targetDevice, disk, fsType,
-    currentSizeBytes, reclaimableBytes, projectedSizeBytes: currentSizeBytes + reclaimableBytes,
+    currentSizeBytes, reclaimableBytes, freeSpaceBytes, orphanBytes, projectedSizeBytes: currentSizeBytes + reclaimableBytes,
     items, skipped
   };
 }
@@ -7222,7 +7210,7 @@ router.post('/storage/disk-reclaim-scan', authenticateTokenOrFirstTime, async (r
 
 // Exécute la récupération d'espace (wipefs + btrfs device add). Réutilisée par
 // l'endpoint autonome ET par l'étape `reclaim-space` du déplacement Docker.
-async function drReclaimRun(add: (m: string) => void): Promise<{ newSizeBytes: number }> {
+async function drReclaimRun(add: (m: string) => void, opts: { free?: boolean; orphans?: boolean } = { free: true, orphans: true }): Promise<{ newSizeBytes: number }> {
   const scan = await drScan();
   if (!scan.canProceed) throw new Error(`Pré-vérifications échouées: ${scan.reasons.join(' · ')}`);
   const disk = scan.disk!; const targetMount = scan.targetMount;
@@ -7233,12 +7221,39 @@ async function drReclaimRun(add: (m: string) => void): Promise<{ newSizeBytes: n
   const activeSwaps = await drActiveSwaps();
   const btrfsDevs = await drBtrfsDevices(targetMount);
 
-  for (const item of scan.items) {
-    const dev = item.device!;
-    // Re-validation de sécurité (l'état a pu changer depuis le scan)
-    const bk = await drBlkid(dev);
-    if (btrfsDevs.has(dev) || await drIsMounted(dev) || (!!bk.uuid && fstabUUIDs.has(bk.uuid)) || activeSwaps.has(dev)) {
-      add(`⏭ ${dev} ignorée (devenue occupée depuis l'analyse)`); continue;
+  // Filtre selon ce qui est demandé (agrandissement=free, récupération=orphans)
+  const wanted = scan.items.filter(it =>
+    (it.kind === 'free-region' && opts.free !== false) ||
+    (it.kind === 'orphan-partition' && opts.orphans !== false));
+
+  for (const item of wanted) {
+    let dev: string | null = null;
+
+    if (item.kind === 'free-region') {
+      // Nouvelle partition dans l'espace non alloué (alignée 1 MiB). On ne touche
+      // JAMAIS une partition existante (donc pas de "partition is being used").
+      const MiB = 1024 * 1024;
+      const start = Math.ceil((item.start || 0) / MiB) * MiB;
+      const end = Math.floor((item.end || 0) / MiB) * MiB;
+      if (end - start < DR_MIN_RECLAIM_BYTES) { add(`⏭ Zone libre trop petite après alignement, ignorée`); continue; }
+      const before = new Set(((await drPartedInfo(disk))?.partitions || []).map(p => p.num));
+      add(`🧩 Création d'une partition dans l'espace non alloué (${gib(end - start)})...`);
+      const mk = await executeCommand('sudo', ['-n', 'sgdisk', '-n', `0:${start / 512}:${end / 512 - 1}`, '-t', '0:8300', disk]);
+      if (mk.exitCode !== 0) { add(`❌ création partition: ${mk.stderr.trim() || 'échec'}`); continue; }
+      await executeCommand('sudo', ['-n', 'partprobe', disk]);
+      await executeCommand('sudo', ['-n', 'partx', '-a', disk]); // ajoute le nouveau nœud sans toucher aux montés
+      await executeCommand('sudo', ['-n', 'udevadm', 'settle', '--timeout=10']);
+      const after = (await drPartedInfo(disk))?.partitions || [];
+      const newp = after.find(p => !before.has(p.num));
+      if (!newp) { add(`❌ Nouvelle partition introuvable après création`); continue; }
+      dev = dmPartPath(disk, newp.num);
+    } else {
+      dev = item.device!;
+      // Re-validation de sécurité (l'état a pu changer depuis le scan)
+      const bk = await drBlkid(dev);
+      if (btrfsDevs.has(dev) || await drIsMounted(dev) || (!!bk.uuid && fstabUUIDs.has(bk.uuid)) || activeSwaps.has(dev)) {
+        add(`⏭ ${dev} ignorée (devenue occupée depuis l'analyse)`); continue;
+      }
     }
 
     add(`🧹 Effacement de la signature de ${dev}...`);

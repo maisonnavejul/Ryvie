@@ -2566,22 +2566,24 @@ const StorageSettings = () => {
               </div>
             </div>
 
-            {/* Case 1 : agrandir la partition dans l'espace non alloué */}
-            <div className="modal-section">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                <input type="checkbox" checked={dockerMoveGrow}
-                  onChange={(e) => { setDockerMoveGrow(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, e.target.checked, dockerMoveReclaim); }} />
-                {t('storageSettings.dockerMoveGrow')}
-              </label>
-            </div>
+            {/* Case 1 : remplir le disque avec l'espace non alloué (nouvelle partition + btrfs add) */}
+            {dockerMoveTarget === '/' && diskReclaim && (diskReclaim.freeSpaceBytes || 0) > 0 && (
+              <div className="modal-section">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={dockerMoveGrow}
+                    onChange={(e) => { setDockerMoveGrow(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, e.target.checked, dockerMoveReclaim); }} />
+                  Utiliser l'espace libre du disque pour agrandir (+{formatBytes(diskReclaim.freeSpaceBytes || 0)}, sans redémarrage)
+                </label>
+              </div>
+            )}
 
             {/* Case 2 : de l'espace inutilisé (ancienne install) détecté, l'ajouter */}
-            {dockerMoveTarget === '/' && diskReclaim && (diskReclaim.reclaimableBytes || 0) > 0 && (
+            {dockerMoveTarget === '/' && diskReclaim && (diskReclaim.orphanBytes || 0) > 0 && (
               <div className="modal-section">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                   <input type="checkbox" checked={dockerMoveReclaim}
                     onChange={(e) => { setDockerMoveReclaim(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, dockerMoveGrow, e.target.checked); }} />
-                  De l'espace inutilisé a été détecté (ancienne installation). L'ajouter (+{formatBytes(diskReclaim.reclaimableBytes || 0)}, sans redémarrage)
+                  De l'espace inutilisé a été détecté (ancienne installation). L'ajouter (+{formatBytes(diskReclaim.orphanBytes || 0)}, sans redémarrage)
                 </label>
               </div>
             )}
@@ -2597,9 +2599,6 @@ const StorageSettings = () => {
                     <span> → <strong style={{ color: '#10b981' }}>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après ajout d'espace</span>
                   )}
                 </div>
-                {dockerMovePrechecks.growPlan && dockerMovePrechecks.growPlan.rebootWillBeRequired && (
-                  <div className="storage-alert storage-alert-warning" style={{ marginTop: '0.5rem' }}>{t('storageSettings.dockerMoveRebootWarning')}</div>
-                )}
                 {dockerMovePrechecks.reasons && dockerMovePrechecks.reasons.length > 0 && (
                   <ul style={{ color: '#ef4444', margin: '0.5rem 0 0', paddingLeft: '1.2rem' }}>
                     {dockerMovePrechecks.reasons.map((r: string, i: number) => <li key={i}>{r}</li>)}
