@@ -2575,13 +2575,13 @@ const StorageSettings = () => {
               </label>
             </div>
 
-            {/* Case 2 : de l'espace inutilisé (ancienne install) détecté — l'ajouter */}
+            {/* Case 2 : de l'espace inutilisé (ancienne install) détecté, l'ajouter */}
             {dockerMoveTarget === '/' && diskReclaim && (diskReclaim.reclaimableBytes || 0) > 0 && (
               <div className="modal-section">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                   <input type="checkbox" checked={dockerMoveReclaim}
                     onChange={(e) => { setDockerMoveReclaim(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, dockerMoveGrow, e.target.checked); }} />
-                  De l'espace inutilisé a été détecté (ancienne installation) — l'ajouter (+{formatBytes(diskReclaim.reclaimableBytes || 0)}, sans redémarrage)
+                  De l'espace inutilisé a été détecté (ancienne installation). L'ajouter (+{formatBytes(diskReclaim.reclaimableBytes || 0)}, sans redémarrage)
                 </label>
               </div>
             )}
@@ -2592,7 +2592,7 @@ const StorageSettings = () => {
 
             {dockerMovePrechecks && !dockerMovePrechecking && (
               <div className="modal-section" style={{ background: '#f8f9fa', padding: '1rem', borderRadius: '6px' }}>
-                <div>{t('storageSettings.dockerMoveRequired')} : <strong>{formatBytes(dockerMovePrechecks.requiredBytes || 0)}</strong> — {t('storageSettings.dockerMoveAvailable')} : <strong>{formatBytes(dockerMovePrechecks.availableBytes || 0)}</strong>
+                <div>{t('storageSettings.dockerMoveRequired')} : <strong>{formatBytes(dockerMovePrechecks.requiredBytes || 0)}</strong> · {t('storageSettings.dockerMoveAvailable')} : <strong>{formatBytes(dockerMovePrechecks.availableBytes || 0)}</strong>
                   {(dockerMovePrechecks.projectedAvailableBytes || 0) > (dockerMovePrechecks.availableBytes || 0) && (
                     <span> → <strong style={{ color: '#10b981' }}>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après ajout d'espace</span>
                   )}
@@ -2605,7 +2605,9 @@ const StorageSettings = () => {
                     {dockerMovePrechecks.reasons.map((r: string, i: number) => <li key={i}>{r}</li>)}
                   </ul>
                 )}
-                <div className="storage-alert storage-alert-warning" style={{ marginTop: '0.5rem' }}>{t('storageSettings.dockerMoveDowntime')}</div>
+                <div className="storage-alert storage-alert-error" style={{ marginTop: '0.5rem', fontWeight: 600 }}>
+                  ⚠️ Attention : toutes les applications (Docker) seront arrêtées pendant l'opération et redémarreront une fois la copie terminée. Prévois une courte interruption de service.
+                </div>
               </div>
             )}
 

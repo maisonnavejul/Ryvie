@@ -7253,7 +7253,7 @@ async function drReclaimRun(add: (m: string) => void): Promise<{ newSizeBytes: n
 
   const curR = await executeCommand('findmnt', ['-bno', 'SIZE', targetMount]);
   const newSizeBytes = curR.exitCode === 0 ? (parseInt(curR.stdout.trim()) || 0) : 0;
-  add(`🏁 Terminé — nouvelle taille de ${targetMount} : ${gib(newSizeBytes)}`);
+  add(`🏁 Terminé. Nouvelle taille de ${targetMount} : ${gib(newSizeBytes)}`);
   return { newSizeBytes };
 }
 
