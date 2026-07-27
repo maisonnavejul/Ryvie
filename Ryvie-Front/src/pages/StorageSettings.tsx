@@ -190,6 +190,7 @@ const StorageSettings = () => {
   const [showDockerMoveModal, setShowDockerMoveModal] = useState(false);
   const [dockerMoveTarget, setDockerMoveTarget] = useState<string>('');
   const [dockerMoveGrow, setDockerMoveGrow] = useState(false);
+  const [dockerMoveReclaim, setDockerMoveReclaim] = useState(false);
   const [dockerMovePrechecks, setDockerMovePrechecks] = useState<any>(null);
   const [dockerMovePrechecking, setDockerMovePrechecking] = useState(false);
   const [dockerMoveState, setDockerMoveState] = useState<any>(null);
@@ -1073,14 +1074,14 @@ const StorageSettings = () => {
   }, [disks, dockerLocation]);
 
   // Lance les pré-vérifications pour une cible donnée
-  const runDockerMovePrechecks = async (targetMount: string, grow: boolean) => {
+  const runDockerMovePrechecks = async (targetMount: string, grow: boolean, reclaim = false) => {
     setDockerMovePrechecking(true);
     setDockerMovePrechecks(null);
     try {
       const accessMode = getCurrentAccessMode() || 'private';
       const serverUrl = getServerUrl(accessMode);
       const resp = await axios.post(`${serverUrl}/api/storage/docker-move-prechecks`, {
-        targetMount, growRequested: grow
+        targetMount, growRequested: grow, reclaimRequested: reclaim
       }, { timeout: 60000 });
       setDockerMovePrechecks(resp.data);
     } catch (error) {
@@ -1100,7 +1101,7 @@ const StorageSettings = () => {
       const accessMode = getCurrentAccessMode() || 'private';
       const serverUrl = getServerUrl(accessMode);
       const resp = await axios.post(`${serverUrl}/api/storage/docker-move`, {
-        targetMount: dockerMoveTarget, growRequested: dockerMoveGrow
+        targetMount: dockerMoveTarget, growRequested: dockerMoveGrow, reclaimRequested: dockerMoveReclaim
       }, { timeout: 30000 });
       if (resp.data.success) {
         addLog('Déplacement Docker démarré', 'success');
@@ -1950,8 +1951,10 @@ const StorageSettings = () => {
                       onClick={() => {
                         setDockerMoveTarget('');
                         setDockerMoveGrow(false);
+                        setDockerMoveReclaim(false);
                         setDockerMovePrechecks(null);
                         loadDockerLocation();
+                        loadDiskReclaim();
                         setShowDockerMoveModal(true);
                       }}
                     >
@@ -2653,10 +2656,26 @@ const StorageSettings = () => {
               </div>
             </div>
 
+            {/* Récupérer l'espace d'abord (cible = racine btrfs avec de l'espace récupérable) */}
+            {dockerMoveTarget === '/' && diskReclaim && (diskReclaim.reclaimableBytes || 0) > 0 && (
+              <div className="modal-section">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={dockerMoveReclaim}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setDockerMoveReclaim(on);
+                      if (on) setDockerMoveGrow(false); // exclusif avec l'agrandissement
+                      if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, on ? false : dockerMoveGrow, on);
+                    }} />
+                  Récupérer l'espace disque d'abord (anciennes installs + zones libres, +{formatBytes(diskReclaim.reclaimableBytes || 0)}, sans redémarrage)
+                </label>
+              </div>
+            )}
+
             <div className="modal-section">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                <input type="checkbox" checked={dockerMoveGrow}
-                  onChange={(e) => { setDockerMoveGrow(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, e.target.checked); }} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: dockerMoveReclaim ? 'not-allowed' : 'pointer', opacity: dockerMoveReclaim ? 0.5 : 1 }}>
+                <input type="checkbox" checked={dockerMoveGrow} disabled={dockerMoveReclaim}
+                  onChange={(e) => { setDockerMoveGrow(e.target.checked); if (dockerMoveTarget) runDockerMovePrechecks(dockerMoveTarget, e.target.checked, false); }} />
                 {t('storageSettings.dockerMoveGrow')}
               </label>
             </div>
@@ -2668,7 +2687,10 @@ const StorageSettings = () => {
             {dockerMovePrechecks && !dockerMovePrechecking && (
               <div className="modal-section" style={{ background: '#f8f9fa', padding: '1rem', borderRadius: '6px' }}>
                 <div>{t('storageSettings.dockerMoveRequired')} : <strong>{formatBytes(dockerMovePrechecks.requiredBytes || 0)}</strong> — {t('storageSettings.dockerMoveAvailable')} : <strong>{formatBytes(dockerMovePrechecks.availableBytes || 0)}</strong>
-                  {dockerMoveGrow && (dockerMovePrechecks.growableBytes || 0) > 0 && (
+                  {dockerMoveReclaim && (dockerMovePrechecks.reclaimableBytes || 0) > 0 && (
+                    <span> → <strong style={{ color: '#10b981' }}>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après récupération</span>
+                  )}
+                  {!dockerMoveReclaim && dockerMoveGrow && (dockerMovePrechecks.growableBytes || 0) > 0 && (
                     <span> → <strong>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après agrandissement</span>
                   )}
                 </div>

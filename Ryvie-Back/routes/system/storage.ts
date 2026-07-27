@@ -6188,8 +6188,9 @@ interface DockerMoveState {
   targetMount: string;
   targetDockerDir: string;
   targetContainerdDir: string;
-  // Agrandissement
+  // Agrandissement / récupération d'espace
   growRequested: boolean;
+  reclaimRequested: boolean;
   targetDisk: string | null;
   targetPartNum: number | null;
   partTable: 'msdos' | 'gpt' | null;
@@ -6219,7 +6220,7 @@ function emptyDockerMoveState(): DockerMoveState {
     id: null, status: 'idle',
     sourceDockerDir: '/data/docker', sourceContainerdDir: '/data/containerd',
     targetMount: '', targetDockerDir: '', targetContainerdDir: '',
-    growRequested: false, targetDisk: null, targetPartNum: null, partTable: null, targetIsRoot: false,
+    growRequested: false, reclaimRequested: false, targetDisk: null, targetPartNum: null, partTable: null, targetIsRoot: false,
     resumePhase: 'START', rebootExpected: false, rebootCount: 0,
     preEngineId: null, preContainerCount: null,
     currentStep: -1, totalSteps: 0, steps: [], globalProgress: 0,
@@ -6401,6 +6402,15 @@ async function dmAnalyzeGrow(disk: string, partNum: number): Promise<{
 }
 
 // --- Steps -----------------------------------------------------------------
+
+// Récupère l'espace disque (anciennes installs + zones libres) à chaud via
+// btrfs device add, AVANT la copie Docker. Aucun reboot nécessaire.
+async function dmReclaimSpace(): Promise<void> {
+  setStepDM('reclaim-space', { status: 'running', message: 'Récupération de l\'espace (btrfs device add)...', progress: 20 });
+  const result = await drReclaimRun((m) => logDM(m, 'info'));
+  const gib = (result.newSizeBytes / (1024 ** 3)).toFixed(1);
+  setStepDM('reclaim-space', { status: 'completed', message: `Racine agrandie à ${gib} GiB`, progress: 100 });
+}
 
 // Agrandit la partition cible (relocalise le swap en fin de disque si nécessaire).
 async function dmGrowPartition(): Promise<void> {
@@ -6714,11 +6724,15 @@ const DM_HANDLERS: { [id: string]: () => Promise<void> } = {
   'move-start': dmStartServices,
   'move-verify': dmVerify,
   'move-cleanup': dmCleanupOld,
+  'reclaim-space': dmReclaimSpace,
 };
 
-function buildDockerMoveSteps(growRequested: boolean): DockerMoveStep[] {
+function buildDockerMoveSteps(growRequested: boolean, reclaimRequested = false): DockerMoveStep[] {
   const defs: { id: string; name: string }[] = [];
-  if (growRequested) {
+  if (reclaimRequested) {
+    // La récupération d'espace (btrfs device add) est à chaud : elle remplace l'agrandissement.
+    defs.push({ id: 'reclaim-space', name: 'Récupérer l\'espace disque' });
+  } else if (growRequested) {
     defs.push({ id: 'grow-partition', name: 'Agrandir la partition cible' });
     defs.push({ id: 'grow-reread', name: 'Relire la table de partition' });
     defs.push({ id: 'grow-btrfs', name: 'Agrandir le système de fichiers' });
@@ -6826,11 +6840,11 @@ function dmComputeTargetDirs(targetMount: string): { docker: string; containerd:
 }
 
 // Validation partagée (utilisée par prechecks ET par le POST docker-move).
-async function dmValidate(targetMount: string, growRequested: boolean): Promise<{
+async function dmValidate(targetMount: string, growRequested: boolean, reclaimRequested = false): Promise<{
   canProceed: boolean; reasons: string[];
   sourceDockerDir: string; sourceContainerdDir: string;
   requiredBytes: number; availableBytes: number;
-  growableBytes: number; projectedAvailableBytes: number;
+  growableBytes: number; reclaimableBytes: number; projectedAvailableBytes: number;
   targetDisk: string | null; targetPartNum: number | null; targetIsRoot: boolean;
   growPlan: { supported: boolean; reason: string; rebootWillBeRequired: boolean; swapRelocation: boolean; alreadyMax: boolean } | null;
 }> {
@@ -6882,10 +6896,23 @@ async function dmValidate(targetMount: string, growRequested: boolean): Promise<
     }
   }
 
-  // Espace projeté = dispo actuel + place récupérée par l'agrandissement.
-  const projectedAvailableBytes = availableBytes + growableBytes;
+  // Espace récupérable à chaud (btrfs device add des anciennes installs + zones libres).
+  // Uniquement pour la racine btrfs ; exclusif avec l'agrandissement.
+  let reclaimableBytes = 0;
+  if (reclaimRequested && targetMount === '/') {
+    try {
+      const scan = await drScan();
+      if (scan.fsType === 'btrfs') reclaimableBytes = scan.reclaimableBytes;
+      else reasons.push('Récupération impossible: la racine n\'est pas en btrfs');
+    } catch (e: any) {
+      reasons.push(`Analyse de récupération impossible: ${e.message}`);
+    }
+  }
+
+  // Espace projeté = dispo actuel + place récupérée (agrandissement OU récupération).
+  const projectedAvailableBytes = availableBytes + growableBytes + reclaimableBytes;
   if (requiredBytes > 0 && projectedAvailableBytes < requiredBytes * 1.15) {
-    const suffix = growableBytes > 0 ? ' même après agrandissement' : '';
+    const suffix = (growableBytes + reclaimableBytes) > 0 ? ' même après récupération d\'espace' : '';
     reasons.push(`Espace insuffisant sur ${targetMount}${suffix}: ${Math.round(projectedAvailableBytes / 1e9)} Go dispo, ~${Math.round(requiredBytes * 1.15 / 1e9)} Go requis`);
   }
 
@@ -6893,7 +6920,7 @@ async function dmValidate(targetMount: string, growRequested: boolean): Promise<
     canProceed: reasons.length === 0, reasons,
     sourceDockerDir, sourceContainerdDir,
     requiredBytes, availableBytes,
-    growableBytes, projectedAvailableBytes,
+    growableBytes, reclaimableBytes, projectedAvailableBytes,
     targetDisk, targetPartNum, targetIsRoot, growPlan
   };
 }
@@ -6904,11 +6931,13 @@ async function dmValidate(targetMount: string, growRequested: boolean): Promise<
  */
 router.post('/storage/docker-move-prechecks', authenticateTokenOrFirstTime, async (req: any, res: any) => {
   try {
-    const { targetMount, growRequested = false } = req.body || {};
+    const { targetMount, growRequested = false, reclaimRequested = false } = req.body || {};
     if (!targetMount || typeof targetMount !== 'string') {
       return res.status(400).json({ success: false, error: 'targetMount requis' });
     }
-    const v = await dmValidate(targetMount, !!growRequested);
+    // La récupération est exclusive de l'agrandissement (elle englobe déjà les zones libres).
+    const grow = !!growRequested && !reclaimRequested;
+    const v = await dmValidate(targetMount, grow, !!reclaimRequested);
     const dirs = dmComputeTargetDirs(targetMount);
     res.json({
       success: true,
@@ -6917,6 +6946,7 @@ router.post('/storage/docker-move-prechecks', authenticateTokenOrFirstTime, asyn
       requiredBytes: v.requiredBytes,
       availableBytes: v.availableBytes,
       growableBytes: v.growableBytes,
+      reclaimableBytes: v.reclaimableBytes,
       projectedAvailableBytes: v.projectedAvailableBytes,
       targetDockerDir: dirs.docker,
       targetContainerdDir: dirs.containerd,
@@ -6937,16 +6967,19 @@ router.post('/storage/docker-move', authenticateTokenOrFirstTime, async (req: an
     if (dockerMoveState.status === 'running') {
       return res.status(409).json({ success: false, error: 'Un déplacement est déjà en cours' });
     }
-    const { targetMount, growRequested = false, targetDockerDir, targetContainerdDir } = req.body || {};
+    const { targetMount, growRequested = false, reclaimRequested = false, targetDockerDir, targetContainerdDir } = req.body || {};
     if (!targetMount || typeof targetMount !== 'string') {
       return res.status(400).json({ success: false, error: 'targetMount requis' });
     }
-    const v = await dmValidate(targetMount, !!growRequested);
+    // La récupération est exclusive de l'agrandissement.
+    const grow = !!growRequested && !reclaimRequested;
+    const v = await dmValidate(targetMount, grow, !!reclaimRequested);
     if (!v.canProceed) {
       return res.status(400).json({ success: false, error: 'Pré-vérifications échouées', reasons: v.reasons });
     }
     const dirs = dmComputeTargetDirs(targetMount);
-    const willGrow = !!growRequested && !!(v.growPlan && v.growPlan.supported && !v.growPlan.alreadyMax);
+    const willGrow = grow && !!(v.growPlan && v.growPlan.supported && !v.growPlan.alreadyMax);
+    const willReclaim = !!reclaimRequested && v.reclaimableBytes > 0;
 
     dockerMoveState = emptyDockerMoveState();
     dockerMoveState.id = `dmove-${Date.now()}`;
@@ -6957,10 +6990,11 @@ router.post('/storage/docker-move', authenticateTokenOrFirstTime, async (req: an
     dockerMoveState.targetDockerDir = targetDockerDir || dirs.docker;
     dockerMoveState.targetContainerdDir = targetContainerdDir || dirs.containerd;
     dockerMoveState.growRequested = willGrow;
+    dockerMoveState.reclaimRequested = willReclaim;
     dockerMoveState.targetDisk = v.targetDisk;
     dockerMoveState.targetPartNum = v.targetPartNum;
     dockerMoveState.targetIsRoot = v.targetIsRoot;
-    dockerMoveState.steps = buildDockerMoveSteps(willGrow);
+    dockerMoveState.steps = buildDockerMoveSteps(willGrow, willReclaim);
     dockerMoveState.totalSteps = dockerMoveState.steps.length;
     dockerMoveState.startedAt = new Date().toISOString();
     dockerMoveState.resumePhase = 'START';
@@ -7188,6 +7222,63 @@ router.post('/storage/disk-reclaim-scan', authenticateTokenOrFirstTime, async (r
   }
 });
 
+// Exécute la récupération d'espace (wipefs + btrfs device add). Réutilisée par
+// l'endpoint autonome ET par l'étape `reclaim-space` du déplacement Docker.
+async function drReclaimRun(add: (m: string) => void): Promise<{ newSizeBytes: number }> {
+  const scan = await drScan();
+  if (!scan.canProceed) throw new Error(`Pré-vérifications échouées: ${scan.reasons.join(' · ')}`);
+  const disk = scan.disk!; const targetMount = scan.targetMount;
+  const gib = (b: number) => `${(b / (1024 ** 3)).toFixed(1)} GiB`;
+
+  // Jeux de protection ré-évalués juste avant d'agir
+  const fstabUUIDs = await drFstabUUIDs();
+  const activeSwaps = await drActiveSwaps();
+  const btrfsDevs = await drBtrfsDevices(targetMount);
+
+  for (const item of scan.items) {
+    let dev: string | null = null;
+
+    if (item.kind === 'free-region') {
+      // Créer une partition dans la zone libre (alignée sur 1 MiB), puis l'ajouter
+      const MiB = 1024 * 1024;
+      const start = Math.ceil((item.start || 0) / MiB) * MiB;
+      const end = Math.floor((item.end || 0) / MiB) * MiB;
+      if (end - start < DR_MIN_RECLAIM_BYTES) { add(`⏭ Zone libre trop petite après alignement, ignorée`); continue; }
+      const before = new Set(((await drPartedInfo(disk))?.partitions || []).map(p => p.num));
+      add(`🧩 Création d'une partition dans l'espace non alloué (${gib(end - start)})...`);
+      const mk = await executeCommand('sudo', ['-n', 'parted', '-m', '-s', disk, 'unit', 'B', 'mkpart', 'primary', `${start}B`, `${end}B`]);
+      if (mk.exitCode !== 0) { add(`❌ mkpart: ${mk.stderr.trim() || 'échec'}`); continue; }
+      await executeCommand('sudo', ['-n', 'partprobe', disk]);
+      await executeCommand('sudo', ['-n', 'partx', '-a', disk]); // s'assure que le nœud apparaît
+      const after = (await drPartedInfo(disk))?.partitions || [];
+      const newp = after.find(p => !before.has(p.num));
+      if (!newp) { add(`❌ Nouvelle partition introuvable après création`); continue; }
+      dev = dmPartPath(disk, newp.num);
+    } else {
+      dev = item.device!;
+      // Re-validation de sécurité (l'état a pu changer depuis le scan)
+      const bk = await drBlkid(dev);
+      if (btrfsDevs.has(dev) || await drIsMounted(dev) || (!!bk.uuid && fstabUUIDs.has(bk.uuid)) || activeSwaps.has(dev)) {
+        add(`⏭ ${dev} ignorée (devenue occupée depuis l'analyse)`); continue;
+      }
+    }
+
+    add(`🧹 Effacement de la signature de ${dev}...`);
+    const w = await executeCommand('sudo', ['-n', 'wipefs', '-a', dev]);
+    if (w.exitCode !== 0) { add(`❌ wipefs ${dev}: ${w.stderr.trim() || 'échec'}`); continue; }
+    add(`➕ Ajout de ${dev} (${gib(item.sizeBytes)}) à ${targetMount}...`);
+    const a = await executeCommand('sudo', ['-n', 'btrfs', 'device', 'add', '-f', dev, targetMount]);
+    if (a.exitCode !== 0) { add(`❌ btrfs device add ${dev}: ${a.stderr.trim() || 'échec'}`); continue; }
+    add(`✅ ${dev} ajoutée à la racine`);
+    btrfsDevs.add(dev);
+  }
+
+  const curR = await executeCommand('findmnt', ['-bno', 'SIZE', targetMount]);
+  const newSizeBytes = curR.exitCode === 0 ? (parseInt(curR.stdout.trim()) || 0) : 0;
+  add(`🏁 Terminé — nouvelle taille de ${targetMount} : ${gib(newSizeBytes)}`);
+  return { newSizeBytes };
+}
+
 /**
  * POST /api/storage/disk-reclaim  (destructif : wipefs + btrfs device add)
  */
@@ -7198,63 +7289,13 @@ router.post('/storage/disk-reclaim', authenticateTokenOrFirstTime, async (req: a
   const log: string[] = [];
   const add = (m: string) => { log.push(m); if (io) io.emit('disk-reclaim-log', m); };
   try {
-    const scan = await drScan();
-    if (!scan.canProceed) { diskReclaimRunning = false; return res.status(400).json({ success: false, error: 'Pré-vérifications échouées', reasons: scan.reasons }); }
-    const disk = scan.disk!; const targetMount = scan.targetMount;
-    const gib = (b: number) => `${(b / (1024 ** 3)).toFixed(1)} GiB`;
-
-    // Jeux de protection ré-évalués juste avant d'agir
-    const fstabUUIDs = await drFstabUUIDs();
-    const activeSwaps = await drActiveSwaps();
-    let btrfsDevs = await drBtrfsDevices(targetMount);
-
-    for (const item of scan.items) {
-      let dev: string | null = null;
-
-      if (item.kind === 'free-region') {
-        // Créer une partition dans la zone libre (alignée sur 1 MiB), puis l'ajouter
-        const MiB = 1024 * 1024;
-        const start = Math.ceil((item.start || 0) / MiB) * MiB;
-        const end = Math.floor((item.end || 0) / MiB) * MiB;
-        if (end - start < DR_MIN_RECLAIM_BYTES) { add(`⏭ Zone libre trop petite après alignement, ignorée`); continue; }
-        const before = new Set(((await drPartedInfo(disk))?.partitions || []).map(p => p.num));
-        add(`🧩 Création d'une partition dans l'espace non alloué (${gib(end - start)})...`);
-        const mk = await executeCommand('sudo', ['-n', 'parted', '-m', '-s', disk, 'unit', 'B', 'mkpart', 'primary', `${start}B`, `${end}B`]);
-        if (mk.exitCode !== 0) { add(`❌ mkpart: ${mk.stderr.trim() || 'échec'}`); continue; }
-        await executeCommand('sudo', ['-n', 'partprobe', disk]);
-        await executeCommand('sudo', ['-n', 'partx', '-a', disk]); // s'assure que le nœud apparaît
-        const after = (await drPartedInfo(disk))?.partitions || [];
-        const newp = after.find(p => !before.has(p.num));
-        if (!newp) { add(`❌ Nouvelle partition introuvable après création`); continue; }
-        dev = dmPartPath(disk, newp.num);
-      } else {
-        dev = item.device!;
-        // Re-validation de sécurité (l'état a pu changer depuis le scan)
-        const bk = await drBlkid(dev);
-        if (btrfsDevs.has(dev) || await drIsMounted(dev) || (!!bk.uuid && fstabUUIDs.has(bk.uuid)) || activeSwaps.has(dev)) {
-          add(`⏭ ${dev} ignorée (devenue occupée depuis l'analyse)`); continue;
-        }
-      }
-
-      add(`🧹 Effacement de la signature de ${dev}...`);
-      const w = await executeCommand('sudo', ['-n', 'wipefs', '-a', dev]);
-      if (w.exitCode !== 0) { add(`❌ wipefs ${dev}: ${w.stderr.trim() || 'échec'}`); continue; }
-      add(`➕ Ajout de ${dev} (${gib(item.sizeBytes)}) à ${targetMount}...`);
-      const a = await executeCommand('sudo', ['-n', 'btrfs', 'device', 'add', '-f', dev, targetMount]);
-      if (a.exitCode !== 0) { add(`❌ btrfs device add ${dev}: ${a.stderr.trim() || 'échec'}`); continue; }
-      add(`✅ ${dev} ajoutée à la racine`);
-      btrfsDevs.add(dev);
-    }
-
-    const curR = await executeCommand('findmnt', ['-bno', 'SIZE', targetMount]);
-    const newSizeBytes = curR.exitCode === 0 ? (parseInt(curR.stdout.trim()) || 0) : 0;
-    add(`🏁 Terminé — nouvelle taille de ${targetMount} : ${gib(newSizeBytes)}`);
+    const { newSizeBytes } = await drReclaimRun(add);
     diskReclaimRunning = false;
     res.json({ success: true, log, newSizeBytes });
   } catch (error: any) {
     diskReclaimRunning = false;
     add(`❌ Erreur: ${error.message}`);
-    res.status(500).json({ success: false, error: error.message, log });
+    res.status(400).json({ success: false, error: error.message, log });
   }
 });
 
