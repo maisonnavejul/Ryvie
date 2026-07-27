@@ -7017,5 +7017,246 @@ router.post('/storage/docker-move-reset', authenticateTokenOrFirstTime, async (r
   }
 });
 
+// ===========================================================================
+// RÉCUPÉRATION D'ESPACE DISQUE (nettoyage des anciennes installs)
+// ---------------------------------------------------------------------------
+// Récupère à chaud, sur le disque qui héberge la racine btrfs, l'espace des
+// partitions orphelines (anciennes installations : vieux @rootfs, etc.) et des
+// zones libres, en les ajoutant au système de fichiers racine via
+// `btrfs device add`. Aucun déplacement de données, aucun reboot.
+// ===========================================================================
+
+const DR_MIN_RECLAIM_BYTES = 4 * 1024 * 1024 * 1024; // on ignore les bouts < 4 GiB
+
+interface DrPartedInfo {
+  table: string;
+  diskSize: number;
+  partitions: { num: number; start: number; end: number; size: number; fs: string; name: string; flags: string }[];
+  freeRegions: { start: number; end: number; size: number }[];
+}
+
+// parted machine-readable AVEC les zones libres (`print free`)
+async function drPartedInfo(disk: string): Promise<DrPartedInfo | null> {
+  const r = await executeCommand('sudo', ['-n', 'parted', '-m', '-s', disk, 'unit', 'B', 'print', 'free']);
+  if (r.exitCode !== 0) return null;
+  const lines = r.stdout.split(';\n').map(l => l.trim()).filter(Boolean);
+  let table = ''; let diskSize = 0;
+  const partitions: DrPartedInfo['partitions'] = [];
+  const freeRegions: DrPartedInfo['freeRegions'] = [];
+  const num = (s: string) => parseInt((s || '').replace('B', '')) || 0;
+  for (const line of lines) {
+    if (line === 'BYT') continue;
+    const f = line.split(':');
+    if (f[0] === disk) {
+      diskSize = num(f[1]); table = f[5] || '';
+    } else if (f[4] === 'free') {
+      // Ligne d'espace libre : on teste le champ 'fs' AVANT le numéro pour éviter
+      // toute ambiguïté sur le premier champ selon les versions de parted.
+      freeRegions.push({ start: num(f[1]), end: num(f[2]), size: num(f[3]) });
+    } else if (/^\d+$/.test(f[0])) {
+      partitions.push({ num: parseInt(f[0]), start: num(f[1]), end: num(f[2]), size: num(f[3]), fs: f[4] || '', name: f[5] || '', flags: f[6] || '' });
+    }
+  }
+  if (!table) return null;
+  return { table, diskSize, partitions, freeRegions };
+}
+
+// UUID référencés dans /etc/fstab (à ne jamais toucher)
+async function drFstabUUIDs(): Promise<Set<string>> {
+  const set = new Set<string>();
+  try {
+    const content = fs.readFileSync('/etc/fstab', 'utf8');
+    for (const line of content.split('\n')) {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) continue;
+      const m = t.match(/^UUID=([^\s]+)/);
+      if (m) set.add(m[1]);
+    }
+  } catch { /* fstab illisible : on protège en ne récupérant rien plus bas */ }
+  return set;
+}
+
+// Partitions swap actuellement activées
+async function drActiveSwaps(): Promise<Set<string>> {
+  const set = new Set<string>();
+  const r = await executeCommand('sudo', ['-n', 'swapon', '--show=NAME', '--noheadings']);
+  if (r.exitCode === 0) r.stdout.split('\n').map(s => s.trim()).filter(Boolean).forEach(d => set.add(d));
+  return set;
+}
+
+// Devices déjà membres du btrfs cible (jamais candidats à la récupération)
+async function drBtrfsDevices(mount: string): Promise<Set<string>> {
+  const set = new Set<string>();
+  const r = await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'show', mount]);
+  if (r.exitCode === 0) {
+    const re = /path\s+(\/dev\/\S+)/g; let m;
+    while ((m = re.exec(r.stdout))) set.add(m[1]);
+  }
+  return set;
+}
+
+async function drBlkid(dev: string): Promise<{ uuid: string; type: string }> {
+  const r = await executeCommand('sudo', ['-n', 'blkid', '-o', 'export', dev]);
+  if (r.exitCode !== 0) return { uuid: '', type: '' };
+  const uuid = (r.stdout.match(/^UUID=(.*)$/m) || [])[1] || '';
+  const type = (r.stdout.match(/^TYPE=(.*)$/m) || [])[1] || '';
+  return { uuid, type };
+}
+
+async function drIsMounted(dev: string): Promise<boolean> {
+  const r = await executeCommand('findmnt', ['-no', 'TARGET', '--source', dev]);
+  return r.exitCode === 0 && r.stdout.trim().length > 0;
+}
+
+interface DrItem {
+  kind: 'orphan-partition' | 'free-region';
+  device?: string; partNum?: number;
+  start?: number; end?: number;
+  sizeBytes: number; fsType?: string; label: string;
+}
+
+// Analyse partagée (scan lecture seule ET récupération).
+async function drScan(): Promise<{
+  canProceed: boolean; reasons: string[]; warnings: string[];
+  targetMount: string; targetDevice: string | null; disk: string | null; fsType: string;
+  currentSizeBytes: number; reclaimableBytes: number; projectedSizeBytes: number;
+  items: DrItem[]; skipped: { device?: string; sizeBytes: number; reason: string }[];
+}> {
+  const reasons: string[] = []; const warnings: string[] = [];
+  const targetMount = '/';
+  const targetDevice = await dmMountSource(targetMount);
+  const fsR = await executeCommand('findmnt', ['-no', 'FSTYPE', targetMount]);
+  const fsType = fsR.exitCode === 0 ? fsR.stdout.trim() : '';
+  if (fsType !== 'btrfs') reasons.push(`La racine ${targetMount} n'est pas en btrfs (${fsType || 'inconnu'}) — récupération à chaud impossible`);
+  const split = targetDevice ? dmSplitDevice(targetDevice) : null;
+  if (!split) reasons.push('Device racine non partitionnable (RAID/LVM ?)');
+  const disk = split ? split.disk : null;
+
+  const info = disk ? await drPartedInfo(disk) : null;
+  if (disk && !info) reasons.push('Lecture de la table de partition impossible');
+
+  const items: DrItem[] = [];
+  const skipped: { device?: string; sizeBytes: number; reason: string }[] = [];
+
+  if (info && disk && fsType === 'btrfs') {
+    const fstabUUIDs = await drFstabUUIDs();
+    const activeSwaps = await drActiveSwaps();
+    const btrfsDevs = await drBtrfsDevices(targetMount);
+
+    for (const p of info.partitions) {
+      const dev = dmPartPath(disk, p.num);
+      if (btrfsDevs.has(dev)) continue;                    // déjà dans la racine
+      // Ne JAMAIS toucher une partition EFI/boot, même orpheline
+      if (/esp|boot/i.test(p.flags)) { skipped.push({ device: dev, sizeBytes: p.size, reason: 'partition EFI/boot (protégée)' }); continue; }
+      const bk = await drBlkid(dev);
+      const mounted = await drIsMounted(dev);
+      const inFstab = !!bk.uuid && fstabUUIDs.has(bk.uuid);
+      const isActiveSwap = activeSwaps.has(dev);
+      if (mounted || inFstab || isActiveSwap) continue;    // en cours d'utilisation
+      if (p.size < DR_MIN_RECLAIM_BYTES) { skipped.push({ device: dev, sizeBytes: p.size, reason: 'trop petite (récupérable uniquement hors-ligne)' }); continue; }
+      items.push({ kind: 'orphan-partition', device: dev, partNum: p.num, sizeBytes: p.size, fsType: bk.type || p.fs || 'inconnu', label: `Ancienne partition ${bk.type || p.fs || ''} orpheline` });
+    }
+    for (const fr of info.freeRegions) {
+      if (fr.size < DR_MIN_RECLAIM_BYTES) continue;
+      items.push({ kind: 'free-region', start: fr.start, end: fr.end, sizeBytes: fr.size, label: 'Espace non alloué' });
+    }
+  }
+
+  const reclaimableBytes = items.reduce((a, i) => a + i.sizeBytes, 0);
+  const curR = await executeCommand('findmnt', ['-bno', 'SIZE', targetMount]);
+  const currentSizeBytes = curR.exitCode === 0 ? (parseInt(curR.stdout.trim()) || 0) : 0;
+
+  if (reasons.length === 0 && items.length === 0) reasons.push('Aucun espace récupérable détecté sur le disque système');
+  if (fsType === 'btrfs' && items.length > 0) warnings.push('La racine deviendra un btrfs multi-partitions. Garde un accès console/physique au prochain redémarrage pour parer à tout imprévu.');
+
+  return {
+    canProceed: reasons.length === 0 && items.length > 0, reasons, warnings,
+    targetMount, targetDevice, disk, fsType,
+    currentSizeBytes, reclaimableBytes, projectedSizeBytes: currentSizeBytes + reclaimableBytes,
+    items, skipped
+  };
+}
+
+/**
+ * POST /api/storage/disk-reclaim-scan  (lecture seule)
+ */
+router.post('/storage/disk-reclaim-scan', authenticateTokenOrFirstTime, async (req: any, res: any) => {
+  try {
+    res.json({ success: true, ...(await drScan()) });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/storage/disk-reclaim  (destructif : wipefs + btrfs device add)
+ */
+let diskReclaimRunning = false;
+router.post('/storage/disk-reclaim', authenticateTokenOrFirstTime, async (req: any, res: any) => {
+  if (diskReclaimRunning) return res.status(409).json({ success: false, error: 'Une récupération est déjà en cours' });
+  diskReclaimRunning = true;
+  const log: string[] = [];
+  const add = (m: string) => { log.push(m); if (io) io.emit('disk-reclaim-log', m); };
+  try {
+    const scan = await drScan();
+    if (!scan.canProceed) { diskReclaimRunning = false; return res.status(400).json({ success: false, error: 'Pré-vérifications échouées', reasons: scan.reasons }); }
+    const disk = scan.disk!; const targetMount = scan.targetMount;
+    const gib = (b: number) => `${(b / (1024 ** 3)).toFixed(1)} GiB`;
+
+    // Jeux de protection ré-évalués juste avant d'agir
+    const fstabUUIDs = await drFstabUUIDs();
+    const activeSwaps = await drActiveSwaps();
+    let btrfsDevs = await drBtrfsDevices(targetMount);
+
+    for (const item of scan.items) {
+      let dev: string | null = null;
+
+      if (item.kind === 'free-region') {
+        // Créer une partition dans la zone libre (alignée sur 1 MiB), puis l'ajouter
+        const MiB = 1024 * 1024;
+        const start = Math.ceil((item.start || 0) / MiB) * MiB;
+        const end = Math.floor((item.end || 0) / MiB) * MiB;
+        if (end - start < DR_MIN_RECLAIM_BYTES) { add(`⏭ Zone libre trop petite après alignement, ignorée`); continue; }
+        const before = new Set(((await drPartedInfo(disk))?.partitions || []).map(p => p.num));
+        add(`🧩 Création d'une partition dans l'espace non alloué (${gib(end - start)})...`);
+        const mk = await executeCommand('sudo', ['-n', 'parted', '-m', '-s', disk, 'unit', 'B', 'mkpart', 'primary', `${start}B`, `${end}B`]);
+        if (mk.exitCode !== 0) { add(`❌ mkpart: ${mk.stderr.trim() || 'échec'}`); continue; }
+        await executeCommand('sudo', ['-n', 'partprobe', disk]);
+        await executeCommand('sudo', ['-n', 'partx', '-a', disk]); // s'assure que le nœud apparaît
+        const after = (await drPartedInfo(disk))?.partitions || [];
+        const newp = after.find(p => !before.has(p.num));
+        if (!newp) { add(`❌ Nouvelle partition introuvable après création`); continue; }
+        dev = dmPartPath(disk, newp.num);
+      } else {
+        dev = item.device!;
+        // Re-validation de sécurité (l'état a pu changer depuis le scan)
+        const bk = await drBlkid(dev);
+        if (btrfsDevs.has(dev) || await drIsMounted(dev) || (!!bk.uuid && fstabUUIDs.has(bk.uuid)) || activeSwaps.has(dev)) {
+          add(`⏭ ${dev} ignorée (devenue occupée depuis l'analyse)`); continue;
+        }
+      }
+
+      add(`🧹 Effacement de la signature de ${dev}...`);
+      const w = await executeCommand('sudo', ['-n', 'wipefs', '-a', dev]);
+      if (w.exitCode !== 0) { add(`❌ wipefs ${dev}: ${w.stderr.trim() || 'échec'}`); continue; }
+      add(`➕ Ajout de ${dev} (${gib(item.sizeBytes)}) à ${targetMount}...`);
+      const a = await executeCommand('sudo', ['-n', 'btrfs', 'device', 'add', '-f', dev, targetMount]);
+      if (a.exitCode !== 0) { add(`❌ btrfs device add ${dev}: ${a.stderr.trim() || 'échec'}`); continue; }
+      add(`✅ ${dev} ajoutée à la racine`);
+      btrfsDevs.add(dev);
+    }
+
+    const curR = await executeCommand('findmnt', ['-bno', 'SIZE', targetMount]);
+    const newSizeBytes = curR.exitCode === 0 ? (parseInt(curR.stdout.trim()) || 0) : 0;
+    add(`🏁 Terminé — nouvelle taille de ${targetMount} : ${gib(newSizeBytes)}`);
+    diskReclaimRunning = false;
+    res.json({ success: true, log, newSizeBytes });
+  } catch (error: any) {
+    diskReclaimRunning = false;
+    add(`❌ Erreur: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message, log });
+  }
+});
+
 export = router;
 module.exports.setSocketIO = setSocketIO;
