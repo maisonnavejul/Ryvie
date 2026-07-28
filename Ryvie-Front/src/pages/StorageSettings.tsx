@@ -2566,7 +2566,7 @@ const StorageSettings = () => {
               </div>
             </div>
 
-            {/* Agrandir la partition racine dans l'espace libre adjacent (resize + reboot) */}
+            {/* Agrandir la partition cible pour remplir le disque (à chaud, sans reboot) */}
             <div className="modal-section">
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                 <input type="checkbox" checked={dockerMoveGrow}
@@ -2586,9 +2586,10 @@ const StorageSettings = () => {
                     <span> → <strong style={{ color: '#10b981' }}>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après agrandissement</span>
                   )}
                 </div>
-                {dockerMovePrechecks.growPlan && dockerMovePrechecks.growPlan.rebootWillBeRequired && (
-                  <div className="storage-alert storage-alert-warning" style={{ marginTop: '0.5rem' }}>
-                    ⚠️ Un redémarrage sera nécessaire pour agrandir la partition racine montée. La reprise est automatique après le reboot.
+                {dockerMovePrechecks.growPlan && dockerMovePrechecks.growPlan.supported && !dockerMovePrechecks.growPlan.alreadyMax && (
+                  <div style={{ marginTop: '0.5rem', color: '#10b981' }}>
+                    ✓ L'agrandissement se fait à chaud, sans redémarrage : seule la fin de la partition bouge, aucune donnée n'est déplacée.
+                    {dockerMovePrechecks.growPlan.swapRelocation && ' Le swap sera recréé en fin de disque (brève désactivation).'}
                   </div>
                 )}
                 {dockerMovePrechecks.reasons && dockerMovePrechecks.reasons.length > 0 && (
