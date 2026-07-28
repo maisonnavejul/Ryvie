@@ -248,6 +248,63 @@ function getPartitionPath(diskPath, partNum) {
   return `${diskPath}${partNum}`;
 }
 
+// ============================================================
+// Helpers btrfs — migration à chaud du stockage (device add/remove).
+// Le filesystem /data est déplacé/étendu SANS démonter, SANS arrêter
+// Docker et SANS réinstaller les apps : les subvolume IDs sont préservés.
+// ============================================================
+interface BtrfsDeviceInfo {
+  devid: number;
+  sizeBytes: number;
+  usedBytes: number;
+  path: string;
+}
+
+function parseBtrfsSize(size: string): number {
+  const match = size.match(/^([\d.]+)(B|KiB|MiB|GiB|TiB|PiB)$/);
+  if (!match) return 0;
+  const units: Record<string, number> = { B: 1, KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3, TiB: 1024 ** 4, PiB: 1024 ** 5 };
+  return Math.round(parseFloat(match[1]) * (units[match[2]] || 1));
+}
+
+async function getBtrfsDevices(mount: string): Promise<BtrfsDeviceInfo[]> {
+  const result = await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'show', mount]);
+  const devices: BtrfsDeviceInfo[] = [];
+  const regex = /devid\s+(\d+)\s+size\s+(\S+)\s+used\s+(\S+)\s+path\s+(\S+)/g;
+  let match;
+  while ((match = regex.exec(result.stdout)) !== null) {
+    devices.push({
+      devid: parseInt(match[1]),
+      sizeBytes: parseBtrfsSize(match[2]),
+      usedBytes: parseBtrfsSize(match[3]),
+      path: match[4]
+    });
+  }
+  return devices;
+}
+
+async function getBtrfsUsedBytes(mount: string): Promise<number> {
+  const result = await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'usage', '-b', mount]);
+  const match = result.stdout.match(/^\s*Used:\s*(\d+)/m);
+  return match ? parseInt(match[1]) : 0;
+}
+
+// `btrfs filesystem resize max` cible le devid 1 par défaut. Après une
+// migration à chaud (device add/remove), le devid restant n'est plus 1 :
+// on résout donc explicitement le devid pour être robuste quelle que soit
+// la version de btrfs-progs (les anciennes échouent au lieu de retomber
+// sur le devid le plus bas).
+async function btrfsResizeMax(mount: string): Promise<CommandResult> {
+  let devid = 1;
+  try {
+    const devices = await getBtrfsDevices(mount);
+    if (devices.length > 0) {
+      devid = Math.min(...devices.map(d => d.devid));
+    }
+  } catch (e: any) {}
+  return executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', `${devid}:max`, mount]);
+}
+
 type LogFn = (message: string, type?: string) => void;
 const noopLog: LogFn = () => {};
 
@@ -1091,7 +1148,7 @@ router.post('/storage/mdraid-optimize-and-add', authenticateTokenOrFirstTime, as
       
       // Faire croître le filesystem btrfs
       log(`Resizing btrfs filesystem...`, 'info');
-      await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+      await btrfsResizeMax('/data');
       log(`✓ Filesystem resized`, 'success');
       
     } catch (error: any) {
@@ -1554,7 +1611,7 @@ router.post('/storage/mdraid-add-disk', authenticateTokenOrFirstTime, async (req
     // Étape 7: Redimensionner le filesystem btrfs
     log('=== Step 7: Resizing btrfs filesystem ===', 'step');
     try {
-      await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+      await btrfsResizeMax('/data');
       log('✓ Filesystem resized to use full RAID capacity', 'success');
     } catch (error: any) {
       log(`Warning: Could not resize btrfs filesystem: ${error.message}`, 'warning');
@@ -1838,7 +1895,7 @@ router.post('/storage/mdraid-add-disks', authenticateTokenOrFirstTime, async (re
     // Étape 7: Redimensionner le filesystem btrfs
     log('=== Step 7: Resizing btrfs filesystem ===', 'step');
     try {
-      await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+      await btrfsResizeMax('/data');
       log('✓ Filesystem resized to use full RAID capacity', 'success');
     } catch (error: any) {
       log(`Warning: Could not resize btrfs filesystem: ${error.message}`, 'warning');
@@ -2616,15 +2673,13 @@ router.post('/storage/mdraid-create-prechecks', authenticateTokenOrFirstTime, as
     
     const partPaths = disks.map(d => getPartitionPath(d, 1));
     plan.push(`mdadm --create /dev/md0 --level=${raidConfig.mdLevel} --raid-devices=${disks.length} ${partPaths.join(' ')}`);
-    plan.push(`mkfs.btrfs -f /dev/md0`);
-    plan.push(`mount /dev/md0 /mnt/new_raid`);
-    plan.push(`systemctl stop docker.socket docker containerd`);
-    plan.push(`rsync -a --exclude /docker/ --exclude /containerd/ --exclude /snapshot/ /data/ /mnt/new_raid/`);
-    plan.push(`umount /mnt/new_raid && umount /data && mount /dev/md0 /data`);
+    plan.push(`# Migration à chaud si /data est déjà en btrfs — zéro coupure, apps non touchées :`);
+    plan.push(`btrfs device add -f /dev/md0 /data      # étend le pool instantanément`);
+    plan.push(`btrfs device remove <ancien device> /data  # draine les données en arrière-plan`);
+    plan.push(`# (machine vierge : mkfs.btrfs -f -L DATA /dev/md0 && mount /dev/md0 /data)`);
     plan.push(`# Write clean mdadm.conf with HOMEHOST <ignore>`);
     plan.push(`update-initramfs -u`);
-    plan.push(`systemctl start containerd docker.socket docker`);
-    plan.push(`# Reinstall all Docker apps from /data/config/manifests/ via docker compose up`);
+    plan.push(`# Update /etc/fstab (UUID=<fs-uuid> /data btrfs defaults,noatime,compress=zstd:3,nofail)`);
     
     res.json({
       success: true,
@@ -2743,8 +2798,11 @@ router.post('/storage/mdraid-create', authenticateTokenOrFirstTime, async (req: 
       }
       const partPaths = disks.map(d => getPartitionPath(d, 1));
       log(`mdadm --create /dev/md0 --level=${raidConfig.mdLevel} --raid-devices=${disks.length} ${partPaths.join(' ')}`, 'info');
-      log(`mkfs.btrfs -f /dev/md0`, 'info');
-      log(`mount /dev/md0 /data`, 'info');
+      log('Si /data est déjà un filesystem btrfs → migration à chaud (zéro coupure) :', 'info');
+      log(`  btrfs device add -f /dev/md0 /data      # étend le pool instantanément`, 'info');
+      log(`  btrfs device remove <ancien> /data      # draine les données en arrière-plan`, 'info');
+      log('Sinon (machine vierge) :', 'info');
+      log(`  mkfs.btrfs -f -L DATA /dev/md0 && mount /dev/md0 /data`, 'info');
       log('✓ Dry run completed', 'success');
       return res.json({ success: true, dryRun: true, logs, message: 'Dry run completed' });
     }
@@ -2974,48 +3032,87 @@ router.post('/storage/mdraid-create', authenticateTokenOrFirstTime, async (req: 
     
     await executeCommand('sleep', ['2']);
     
-    // === Step 4: Create filesystem ===
-    log('=== Step 4: Creating btrfs filesystem ===', 'step');
-    
-    log(`Creating btrfs filesystem on ${mdDevice}...`, 'info');
-    const mkfsResult = await executeCommand('sudo', ['-n', 'mkfs.btrfs', '-f', mdDevice]);
-    if (mkfsResult.stdout) log(mkfsResult.stdout.trim(), 'info');
-    log('✓ Filesystem created', 'success');
-    
-    // === Step 5: Mount on temporary location (keep old /data intact) ===
-    log('=== Step 5: Mounting on temporary location ===', 'step');
-    
-    const tmpMount = '/mnt/new_raid';
-    try {
-      await executeCommand('sudo', ['-n', 'mkdir', '-p', tmpMount]);
-    } catch (e: any) {}
-    
-    log(`Mounting ${mdDevice} on ${tmpMount} (keeping /data on old array)...`, 'info');
-    await executeCommand('sudo', ['-n', 'mount', mdDevice, tmpMount]);
-    log(`✓ Mounted on ${tmpMount}`, 'success');
-    
-    // Set permissions
-    try {
-      await executeCommand('sudo', ['-n', 'chown', 'ryvie:ryvie', tmpMount]);
-      log('✓ Permissions set', 'success');
-    } catch (e: any) {}
-    
-    // === Step 6: Save mdadm.conf (so new array survives reboot) ===
-    log('=== Step 6: Saving RAID configuration ===', 'step');
-    
-    try {
-      const scanResult = await executeCommand('sudo', ['-n', 'mdadm', '--detail', '--scan']);
-      const cleanConf = `# mdadm.conf - RAID configuration (auto-generated)\nHOMEHOST <ignore>\n${scanResult.stdout.trim()}\n`;
-      const fs = require('fs');
-      const tmpFile = '/tmp/mdadm.conf.new';
-      fs.writeFileSync(tmpFile, cleanConf);
-      await executeCommand('sudo', ['-n', 'cp', tmpFile, '/etc/mdadm/mdadm.conf']);
-      fs.unlinkSync(tmpFile);
-      log('✓ Updated /etc/mdadm/mdadm.conf', 'success');
-    } catch (e: any) {
-      log(`Warning: ${e.message}`, 'warning');
+    // ============================================================
+    // Step 4: Analyze current /data — live migration or fresh setup
+    //
+    // If /data is already a mounted btrfs filesystem (nvme partition,
+    // loopback image or old array), we do a LIVE migration:
+    //   btrfs device add /dev/mdX /data   → pool extended instantly
+    //   btrfs device remove <old> /data   → data drains in background
+    // Zero downtime: Docker and all apps keep running, subvolume IDs
+    // are preserved. No mkfs, no rsync, no Docker/app reinstall.
+    // (Validated on RyvieOS: 17 containers untouched during migration.)
+    //
+    // If /data is not btrfs (fresh machine), classic path: mkfs + mount.
+    // ============================================================
+    log('=== Step 4: Analyzing current /data ===', 'step');
+
+    const dataFsType = await executeCommand('findmnt', ['-n', '-o', 'FSTYPE', '/data']);
+    const liveMigration = dataFsType.exitCode === 0 && dataFsType.stdout.trim() === 'btrfs';
+    let oldBtrfsDevices: BtrfsDeviceInfo[] = [];
+
+    if (liveMigration) {
+      oldBtrfsDevices = await getBtrfsDevices('/data');
+      if (oldBtrfsDevices.length === 0) {
+        throw new Error('Could not list btrfs devices backing /data');
+      }
+      log(`/data is a live btrfs filesystem on: ${oldBtrfsDevices.map(d => d.path).join(', ')}`, 'info');
+      log('→ Live migration (btrfs device add/remove): no downtime, no app reinstall', 'info');
+      log('⚠ Do not reboot the machine while the migration is running', 'warning');
+
+      // Capacity check: the new array must hold all current data (+ margin for metadata)
+      const usedBytes = await getBtrfsUsedBytes('/data');
+      const sizeResult = await executeCommand('sudo', ['-n', 'blockdev', '--getsize64', mdDevice]);
+      const arrayBytes = parseInt(sizeResult.stdout.trim()) || 0;
+      const requiredBytes = Math.ceil(usedBytes * 1.05) + 2 * 1024 * 1024 * 1024;
+      log(`Data used: ${(usedBytes / 1073741824).toFixed(1)} GiB | New array capacity: ${(arrayBytes / 1073741824).toFixed(1)} GiB`, 'info');
+      if (arrayBytes < requiredBytes) {
+        throw new Error(`New array too small for live migration: ${(arrayBytes / 1073741824).toFixed(1)} GiB < ${(requiredBytes / 1073741824).toFixed(1)} GiB required (used data + margin)`);
+      }
+      log('✓ Capacity check passed', 'success');
+    } else {
+      log('/data is not a mounted btrfs filesystem → fresh setup (mkfs + mount)', 'info');
     }
-    
+
+    // === Step 5: Fresh setup only — create filesystem and mount ===
+    if (!liveMigration) {
+      log('=== Step 5: Creating btrfs filesystem ===', 'step');
+      const mkfsResult = await executeCommand('sudo', ['-n', 'mkfs.btrfs', '-f', '-L', 'DATA', mdDevice]);
+      if (mkfsResult.exitCode !== 0) {
+        throw new Error(`mkfs.btrfs failed: ${(mkfsResult.stderr || '').trim()}`);
+      }
+      log('✓ Filesystem created', 'success');
+
+      await executeCommand('sudo', ['-n', 'mkdir', '-p', '/data']);
+      const mountResult = await executeCommand('sudo', ['-n', 'mount', '-o', 'noatime,compress=zstd:3', mdDevice, '/data']);
+      if (mountResult.exitCode !== 0) {
+        throw new Error(`mount failed: ${(mountResult.stderr || '').trim()}`);
+      }
+      log(`✓ ${mdDevice} mounted on /data`, 'success');
+
+      try {
+        await executeCommand('sudo', ['-n', 'chown', 'ryvie:ryvie', '/data']);
+        log('✓ Permissions set', 'success');
+      } catch (e: any) {}
+
+      // Dedicated subvolumes so the Docker runtime stays segregated
+      for (const sub of ['docker', 'containerd']) {
+        const subResult = await executeCommand('sudo', ['-n', 'btrfs', 'subvolume', 'create', `/data/${sub}`]);
+        if (subResult.exitCode === 0) {
+          log(`✓ Subvolume /data/${sub} created`, 'success');
+        }
+      }
+    } else {
+      log('=== Step 5: skipped — live migration keeps the existing filesystem ===', 'step');
+    }
+
+    // === Step 6: Save RAID configuration (survives reboot) ===
+    log('=== Step 6: Saving RAID configuration ===', 'step');
+    try {
+      await writeCleanMdadmConf(log);
+    } catch (e: any) {
+      log(`Warning mdadm.conf: ${e.message}`, 'warning');
+    }
     try {
       await ensureBootDegraded(log);
       await executeCommand('sudo', ['-n', 'update-initramfs', '-u']);
@@ -3023,49 +3120,49 @@ router.post('/storage/mdraid-create', authenticateTokenOrFirstTime, async (req: 
     } catch (e: any) {
       log(`Warning initramfs: ${e.message}`, 'warning');
     }
-    
-    // === Step 7: Monitor resync ===
-    log('=== Step 7: Monitoring resync ===', 'step');
-    log('ℹ️ /data remains on old array during resync — no downtime', 'info');
-    
+
+    // === Step 7: Wait for initial resync (array usable, /data untouched) ===
+    log('=== Step 7: Monitoring initial resync ===', 'step');
+    log('ℹ️ /data keeps running on its current storage during resync — no downtime', 'info');
+
     try {
       const mdstatResult = await executeCommand('cat', ['/proc/mdstat']);
       log('📊 /proc/mdstat:', 'info');
       log(mdstatResult.stdout.trim(), 'info');
-      
+
       if (mdstatResult.stdout.includes('recovery') || mdstatResult.stdout.includes('resync')) {
         log('🔄 Resynchronization started...', 'info');
-        
+
         let lastProgress = -1;
         let resyncComplete = false;
         const maxWaitMinutes = 1440;
         const startTime = Date.now();
-        
+
         while (!resyncComplete) {
           await executeCommand('sleep', ['5']);
-          
+
           const elapsedMinutes = (Date.now() - startTime) / 1000 / 60;
           if (elapsedMinutes > maxWaitMinutes) {
             log('⚠ Resync monitoring timeout (24h)', 'warning');
             break;
           }
-          
+
           const currentMdstat = await executeCommand('cat', ['/proc/mdstat']);
           const mdstatOutput = currentMdstat.stdout;
-          
+
           const progressMatch = mdstatOutput.match(/(?:recovery|resync)\s*=\s*(\d+\.\d+)%/);
           if (progressMatch) {
             const progress = parseFloat(progressMatch[1]);
             if (Math.abs(progress - lastProgress) >= 0.5 || lastProgress === -1) {
               const finishMatch = mdstatOutput.match(/finish\s*=\s*([\d.]+min)/);
               const speedMatch = mdstatOutput.match(/speed\s*=\s*([\d.]+[KMG]\/sec)/);
-              
+
               let progressMsg = `🔄 Resync: ${progress.toFixed(1)}%`;
               if (finishMatch) progressMsg += ` | ETA: ${finishMatch[1]}`;
               if (speedMatch) progressMsg += ` | Speed: ${speedMatch[1]}`;
-              
+
               log(progressMsg, 'info');
-              
+
               if (io) {
                 io.emit('mdraid-resync-progress', {
                   percent: progress,
@@ -3089,328 +3186,103 @@ router.post('/storage/mdraid-create', authenticateTokenOrFirstTime, async (req: 
     } catch (e: any) {
       log(`Could not monitor resync: ${e.message}`, 'warning');
     }
-    
-    // === Step 8: Stop Docker & migrate user data (excluding Docker/containerd runtime) ===
-    log('=== Step 8: Migrating data from old /data ===', 'step');
-    
-    // STRATEGY: Never copy /data/docker or /data/containerd.
-    // These contain btrfs subvolumes with internal IDs that break when copied.
-    // Docker will recreate them cleanly when apps are reinstalled via docker compose up.
-    // All user data (apps source, configs, manifests, images, logs) is copied via rsync.
-    
-    // Directories to EXCLUDE from migration (runtime data, regenerated automatically)
-    const MIGRATION_EXCLUDE_DIRS = ['docker', 'containerd', 'snapshot'];
-    
-    try {
-      const oldDataCheck = await executeCommand('ls', ['/data']);
-      if (oldDataCheck.stdout.trim()) {
-        // 8a. Stop Docker and containerd so data is consistent during copy
-        log('🛑 Stopping Docker & containerd before migration...', 'info');
-        try {
-          await executeCommand('sudo', ['-n', 'systemctl', 'stop', 'docker.socket']);
-          await executeCommand('sudo', ['-n', 'systemctl', 'stop', 'docker']);
-          await executeCommand('sudo', ['-n', 'systemctl', 'stop', 'containerd']);
-          log('✓ Docker & containerd stopped', 'success');
-        } catch (e: any) {
-          log(`Warning stopping Docker: ${e.message}`, 'warning');
-        }
-        
-        // 8b. Copy user data with rsync, excluding Docker/containerd runtime dirs
-        log('📦 Migrating user data via rsync (excluding Docker/containerd runtime)...', 'info');
-        log(`Excluded directories: ${MIGRATION_EXCLUDE_DIRS.join(', ')}`, 'info');
-        log('This may take a while depending on data size...', 'info');
-        
-        const rsyncExcludeArgs = MIGRATION_EXCLUDE_DIRS.flatMap(dir => ['--exclude', `/${dir}/`]);
-        
-        try {
-          await executeCommand('sudo', [
-            '-n', 'rsync', '-a', '--info=progress2',
-            ...rsyncExcludeArgs,
-            '/data/', `${tmpMount}/`
-          ]);
-          log('✓ User data migration completed', 'success');
-        } catch (rsyncErr: any) {
-          log(`Warning during rsync: ${rsyncErr.message}`, 'warning');
-        }
-        
-        // 8c. Verify critical directories were copied
-        const criticalDirs = ['config', 'apps'];
-        for (const dir of criticalDirs) {
-          try {
-            const checkResult = await executeCommand('ls', [`${tmpMount}/${dir}`]);
-            if (checkResult.stdout.trim()) {
-              log(`  ✓ ${dir}/ copied successfully`, 'success');
-            } else {
-              log(`  ⚠ ${dir}/ appears empty after copy`, 'warning');
-            }
-          } catch (e: any) {
-            log(`  ⚠ ${dir}/ not found after copy (may not exist on source)`, 'warning');
-          }
-        }
-        
-        log('ℹ️ Docker/containerd runtime excluded — will be recreated when apps are reinstalled', 'info');
-      } else {
-        log('ℹ️ Old /data is empty, nothing to migrate', 'info');
+
+    if (liveMigration) {
+      // === Step 8: Extend /data onto the new array (btrfs device add) ===
+      log('=== Step 8: Extending /data onto the new array ===', 'step');
+      const addResult = await executeCommand('sudo', ['-n', 'btrfs', 'device', 'add', '-f', mdDevice, '/data']);
+      if (addResult.exitCode !== 0) {
+        throw new Error(`btrfs device add failed: ${(addResult.stderr || '').trim()}`);
       }
-    } catch (e: any) {
-      log(`Warning during data migration: ${e.message}`, 'warning');
-      log('⚠ Data migration failed — old data remains on old array', 'warning');
+      log(`✓ ${mdDevice} added to /data — pool extended, apps keep running`, 'success');
+
+      // === Step 9: Drain old device(s) — data moves live, block by block ===
+      log('=== Step 9: Migrating data to the new array (btrfs device remove) ===', 'step');
+      const oldPaths = oldBtrfsDevices.map(d => d.path);
+      const initialUsedBytes = oldBtrfsDevices.reduce((sum, d) => sum + d.usedBytes, 0);
+      log(`Draining ${oldPaths.join(', ')} (${(initialUsedBytes / 1073741824).toFixed(1)} GiB to move)...`, 'info');
+
+      let removeSettled = false;
+      const removePromise = executeCommand('sudo', ['-n', 'btrfs', 'device', 'remove', ...oldPaths, '/data'])
+        .finally(() => { removeSettled = true; });
+
+      let lastPct = -1;
+      while (!removeSettled) {
+        await executeCommand('sleep', ['5']);
+        if (removeSettled) break;
+        try {
+          const devices = await getBtrfsDevices('/data');
+          const remainingUsed = devices
+            .filter(d => oldPaths.includes(d.path))
+            .reduce((sum, d) => sum + d.usedBytes, 0);
+          if (initialUsedBytes > 0) {
+            const pct = Math.min(99, Math.max(0, Math.round((1 - remainingUsed / initialUsedBytes) * 100)));
+            if (pct !== lastPct) {
+              log(`🔄 Migration: ${pct}% — ${(remainingUsed / 1073741824).toFixed(1)} GiB left on old storage`, 'info');
+              if (io) io.emit('mdraid-resync-progress', { percent: pct });
+              lastPct = pct;
+            }
+          }
+        } catch (e: any) {}
+      }
+      const removeResult = await removePromise;
+      if (removeResult.exitCode !== 0) {
+        throw new Error(`btrfs device remove failed: ${(removeResult.stderr || removeResult.stdout || '').trim()}`);
+      }
+      if (io) io.emit('mdraid-resync-progress', { percent: 100, completed: true });
+      log('✓ Migration complete — /data now lives entirely on the new array', 'success');
+      log('✓ Zero downtime: Docker, apps, subvolumes and snapshots untouched', 'success');
+
+      // === Step 10: Clean up old backing storage ===
+      log('=== Step 10: Cleaning up old storage ===', 'step');
+      for (const oldPath of oldPaths) {
+        try {
+          if (/^\/dev\/loop\d+$/.test(oldPath)) {
+            // Loopback image (VPS-style install): detach and delete the img file
+            const backingResult = await executeCommand('sudo', ['-n', 'losetup', '-n', '-O', 'BACK-FILE', oldPath]);
+            const backingFile = backingResult.stdout.trim();
+            await executeCommand('sudo', ['-n', 'losetup', '-d', oldPath]);
+            if (backingFile && backingFile.startsWith('/') && backingFile.endsWith('.img')) {
+              await executeCommand('sudo', ['-n', 'rm', '-f', backingFile]);
+              log(`✓ Loopback image ${backingFile} deleted — space reclaimed on system disk`, 'success');
+            }
+          } else {
+            // Partition/disk: btrfs already cleared its superblock on removal
+            log(`ℹ️ ${oldPath} released (superblock cleared by btrfs) — can be reused or unplugged`, 'info');
+          }
+        } catch (e: any) {
+          log(`Warning cleaning ${oldPath}: ${e.message}`, 'warning');
+        }
+      }
+    } else {
+      log('=== Steps 8-10: skipped (fresh setup, nothing to migrate) ===', 'step');
     }
-    
-    // === Step 9: Swap mounts — switch /data to new array ===
-    log('=== Step 9: Switching /data to new array ===', 'step');
-    
-    // Unmount temporary mount
+
+    // === Step 11: Update /etc/fstab (mount by filesystem UUID) ===
+    log('=== Step 11: Updating /etc/fstab ===', 'step');
     try {
-      await executeCommand('sudo', ['-n', 'umount', tmpMount]);
-      log(`✓ Unmounted ${tmpMount}`, 'success');
-    } catch (e: any) {
-      log(`Warning unmount tmp: ${e.message}`, 'warning');
-    }
-    
-    // Unmount old /data
-    try {
-      await executeCommand('sudo', ['-n', 'umount', '-l', '/data']);
-      log('✓ Unmounted old /data', 'success');
-    } catch (e: any) {
-      log(`Warning unmount old /data: ${e.message}`, 'warning');
-    }
-    
-    // Mount new array on /data
-    await executeCommand('sudo', ['-n', 'mount', mdDevice, '/data']);
-    log(`✓ ${mdDevice} now mounted on /data`, 'success');
-    
-    // Update fstab to point to new device
-    try {
+      const uuidResult = await executeCommand('sudo', ['-n', 'blkid', '-s', 'UUID', '-o', 'value', mdDevice]);
+      const fsUuid = uuidResult.stdout.trim();
+      const fstabSource = fsUuid ? `UUID=${fsUuid}` : mdDevice;
       const fstabResult = await executeCommand('cat', ['/etc/fstab']);
       const fs = require('fs');
-      // Remove any old /data entry
-      let fstabLines = fstabResult.stdout.split('\n').filter(line => !line.match(/\s+\/data\s+/));
-      // Add new entry
-      fstabLines.push(`${mdDevice} /data btrfs defaults,nofail 0 0`);
+      // Drop any previous /data mount entry (keep comments)
+      const fstabLines = fstabResult.stdout.split('\n')
+        .filter(line => line.trim().startsWith('#') || !line.match(/\s+\/data\s+/));
+      while (fstabLines.length > 0 && fstabLines[fstabLines.length - 1].trim() === '') {
+        fstabLines.pop();
+      }
+      fstabLines.push(`${fstabSource} /data btrfs defaults,noatime,compress=zstd:3,nofail 0 0`);
       const tmpFstab = '/tmp/fstab.new';
       fs.writeFileSync(tmpFstab, fstabLines.join('\n') + '\n');
       await executeCommand('sudo', ['-n', 'cp', tmpFstab, '/etc/fstab']);
       fs.unlinkSync(tmpFstab);
-      log(`✓ Updated /etc/fstab (${mdDevice} → /data)`, 'success');
+      await executeCommand('sudo', ['-n', 'systemctl', 'daemon-reload']);
+      log(`✓ Updated /etc/fstab (${fstabSource} → /data)`, 'success');
     } catch (e: any) {
       log(`Warning fstab: ${e.message}`, 'warning');
     }
-    
-    // Write clean mdadm.conf (avoid capturing stderr as config data)
-    try {
-      const scanResult = await executeCommand('sudo', ['-n', 'mdadm', '--detail', '--scan']);
-      const cleanConf = `# mdadm.conf - RAID configuration (auto-generated)\nHOMEHOST <ignore>\n${scanResult.stdout.trim()}\n`;
-      const fs = require('fs');
-      const tmpConf = '/tmp/mdadm.conf.new';
-      fs.writeFileSync(tmpConf, cleanConf);
-      await executeCommand('sudo', ['-n', 'cp', tmpConf, '/etc/mdadm/mdadm.conf']);
-      fs.unlinkSync(tmpConf);
-      log('✓ Written clean /etc/mdadm/mdadm.conf', 'success');
-    } catch (e: any) {
-      log(`Warning mdadm.conf: ${e.message}`, 'warning');
-    }
-    
-    try {
-      await ensureBootDegraded(log);
-      await executeCommand('sudo', ['-n', 'update-initramfs', '-u']);
-      log('✓ Updated initramfs', 'success');
-    } catch (e: any) {}
 
-    // === Step 9.5: Create specific BTRFS subvolumes for Docker ===
-    log('=== Step 9.5: Creating BTRFS subvolumes for Docker ===', 'step');
-    try {
-      // Force subvolume creation for docker and containerd so they are explicitly segregated
-      try {
-        await executeCommand('sudo', ['-n', 'btrfs', 'subvolume', 'create', '/data/docker']);
-        log('✓ Subvolume /data/docker created', 'success');
-      } catch (e: any) {
-        if (!e.message.includes('File exists')) {
-          log(`Warning btrfs create /data/docker: ${e.message}`, 'warning');
-        }
-      }
-      
-      try {
-        await executeCommand('sudo', ['-n', 'btrfs', 'subvolume', 'create', '/data/containerd']);
-        log('✓ Subvolume /data/containerd created', 'success');
-      } catch (e: any) {
-        if (!e.message.includes('File exists')) {
-          log(`Warning btrfs create /data/containerd: ${e.message}`, 'warning');
-        }
-      }
-    } catch (e: any) {
-      log(`Warning creating subvolumes: ${e.message}`, 'warning');
-    }
-    
-    // === Step 10: Restart Docker & containerd on new /data ===
-    log('=== Step 10: Restarting Docker & containerd ===', 'step');
-    
-    try {
-      log('🔄 Starting containerd...', 'info');
-      await executeCommand('sudo', ['-n', 'systemctl', 'start', 'containerd']);
-      await executeCommand('sleep', ['2']);
-      log('✓ containerd started', 'success');
-      
-      log('🔄 Starting Docker...', 'info');
-      await executeCommand('sudo', ['-n', 'systemctl', 'start', 'docker.socket']);
-      await executeCommand('sudo', ['-n', 'systemctl', 'start', 'docker']);
-      await executeCommand('sleep', ['3']);
-      log('✓ Docker started', 'success');
-      
-      // Ensure ryvie-network exists (Docker recreates networks on restart)
-      try {
-        await executeCommand('sudo', ['-n', 'docker', 'network', 'inspect', 'ryvie-network']);
-        log('✓ ryvie-network already exists', 'success');
-      } catch (e: any) {
-        await executeCommand('sudo', ['-n', 'docker', 'network', 'create', 'ryvie-network']);
-        log('✓ ryvie-network created', 'success');
-      }
-    } catch (e: any) {
-      log(`⚠ Error restarting Docker: ${e.message}`, 'warning');
-      log('Docker may need to be restarted manually after reboot', 'warning');
-    }
-    
-    // === Step 10.5: Reinstall Core Services ===
-    log('=== Step 10.5: Reinstalling Core Services ===', 'step');
-    try {
-      const coreStacks = [
-        { name: 'LDAP', dir: '/data/config/ldap' },
-        { name: 'Keycloak', dir: '/opt/Ryvie/keycloak' },
-        { name: 'Reverse Proxy (Caddy)', dir: '/opt/Ryvie/caddy' },
-        { name: 'Portainer', dir: '/data/config/portainer' }
-      ];
-
-      for (const stack of coreStacks) {
-        log(`🔄 Starting ${stack.name}...`, 'info');
-        try {
-          await executeCommand('sudo', ['-n', 'bash', '-c', `cd "${stack.dir}" && docker compose up -d`]);
-          log(`  ✓ ${stack.name} started successfully`, 'success');
-        } catch (e: any) {
-          log(`  ⚠ Error starting ${stack.name}: ${e.message}`, 'warning');
-        }
-      }
-    } catch (e: any) {
-      log(`⚠ Error during core services restart: ${e.message}`, 'warning');
-    }
-
-    // === Step 11: Reinstall all apps from manifests ===
-    log('=== Step 11: Reinstalling Docker apps from manifests ===', 'step');
-    log('ℹ️ Docker runtime was excluded from migration — apps will be reinstalled cleanly', 'info');
-    
-    try {
-      const fsNode = require('fs');
-      const pathNode = require('path');
-      const MANIFESTS_DIR = '/data/config/manifests';
-      const APPS_DIR = '/data/apps';
-      
-      let appDirs: string[] = [];
-      try {
-        appDirs = fsNode.readdirSync(MANIFESTS_DIR, { withFileTypes: true })
-          .filter((d: any) => d.isDirectory())
-          .map((d: any) => d.name);
-      } catch (e: any) {
-        log('ℹ️ No manifests directory found — no apps to reinstall', 'info');
-      }
-      
-      if (appDirs.length > 0) {
-        log(`📦 Found ${appDirs.length} app(s) to reinstall: ${appDirs.join(', ')}`, 'info');
-        
-        let reinstalledCount = 0;
-        let failedCount = 0;
-        
-        for (const appId of appDirs) {
-          try {
-            // Read manifest to find docker-compose path
-            const manifestPath = pathNode.join(MANIFESTS_DIR, appId, 'manifest.json');
-            if (!fsNode.existsSync(manifestPath)) {
-              log(`  ⏭ ${appId}: no manifest.json, skipping`, 'info');
-              continue;
-            }
-            
-            const manifest = JSON.parse(fsNode.readFileSync(manifestPath, 'utf8'));
-            const appDir = manifest.sourceDir || pathNode.join(APPS_DIR, appId);
-            
-            if (!fsNode.existsSync(appDir)) {
-              log(`  ⏭ ${appId}: source dir ${appDir} not found, skipping`, 'warning');
-              continue;
-            }
-            
-            // Find docker-compose file
-            let composeFile = manifest.dockerComposePath || null;
-            if (composeFile) {
-              const fullPath = pathNode.join(appDir, composeFile);
-              if (!fsNode.existsSync(fullPath)) {
-                log(`  ⚠ ${appId}: compose file ${composeFile} not found, searching...`, 'warning');
-                composeFile = null;
-              }
-            }
-            
-            if (!composeFile) {
-              for (const candidate of ['docker-compose.yml', 'docker-compose.yaml']) {
-                if (fsNode.existsSync(pathNode.join(appDir, candidate))) {
-                  composeFile = candidate;
-                  break;
-                }
-              }
-            }
-            
-            if (!composeFile) {
-              log(`  ⏭ ${appId}: no docker-compose file found, skipping`, 'warning');
-              continue;
-            }
-            
-            // Determine working directory
-            const workingDir = composeFile.includes('/')
-              ? pathNode.join(appDir, pathNode.dirname(composeFile))
-              : appDir;
-            const composeFileName = pathNode.basename(composeFile);
-            
-            log(`  🔄 Reinstalling ${appId} (${composeFileName} in ${workingDir})...`, 'info');
-            
-            if (io) {
-              io.emit('mdraid-log', {
-                timestamp: new Date().toISOString(),
-                type: 'info',
-                message: `Reinstalling app: ${appId}`
-              });
-            }
-            
-            // Pull images and start containers (must cd to workingDir first)
-            try {
-              await executeCommand('sudo', ['-n', 'bash', '-c', `cd "${workingDir}" && docker compose -f "${composeFileName}" up -d --pull always`]);
-              log(`  ✅ ${appId} reinstalled successfully`, 'success');
-              reinstalledCount++;
-            } catch (composeErr: any) {
-              // Retry once without --pull (in case of network issues, use cached images)
-              log(`  ⚠ ${appId}: first attempt failed, retrying without pull...`, 'warning');
-              try {
-                await executeCommand('sudo', ['-n', 'bash', '-c', `cd "${workingDir}" && docker compose -f "${composeFileName}" up -d`]);
-                log(`  ✅ ${appId} reinstalled (from cache)`, 'success');
-                reinstalledCount++;
-              } catch (retryErr: any) {
-                log(`  ❌ ${appId}: reinstallation failed: ${retryErr.message}`, 'error');
-                failedCount++;
-              }
-            }
-          } catch (appErr: any) {
-            log(`  ❌ ${appId}: error: ${appErr.message}`, 'error');
-            failedCount++;
-          }
-        }
-        
-        log(`📊 App reinstallation complete: ${reinstalledCount} succeeded, ${failedCount} failed`, 'info');
-        
-        if (failedCount > 0) {
-          log('💡 Failed apps can be reinstalled manually from the App Store or via POST /api/storage/docker-reinstall-apps', 'info');
-        }
-      } else {
-        log('ℹ️ No apps found to reinstall', 'info');
-      }
-    } catch (e: any) {
-      log(`⚠ Error during app reinstallation: ${e.message}`, 'warning');
-      log('💡 Apps can be reinstalled manually via POST /api/storage/docker-reinstall-apps', 'info');
-    }
-    
     // === Step 12: Final status ===
     log('=== Step 12: Final status ===', 'step');
     
@@ -3439,14 +3311,20 @@ router.post('/storage/mdraid-create', authenticateTokenOrFirstTime, async (req: 
       }
     } catch (e: any) {}
     
-    log('✅ RAID array created, data migrated, and apps reinstalled!', 'success');
-    
+    if (liveMigration) {
+      log('✅ RAID array created and /data migrated live — zero downtime, apps untouched!', 'success');
+    } else {
+      log('✅ RAID array created and /data initialized!', 'success');
+    }
+
     res.json({
       success: true,
       dryRun: false,
       logs,
       mdDevice,
-      message: `${level.toUpperCase()} array created on ${mdDevice}, data migrated, apps reinstalled on /data`
+      message: liveMigration
+        ? `${level.toUpperCase()} array created on ${mdDevice}, /data migrated live (zero downtime)`
+        : `${level.toUpperCase()} array created on ${mdDevice}, /data initialized`
     });
   } catch (error: any) {
     console.error('Error creating RAID array:', error);
@@ -3646,6 +3524,172 @@ router.post('/storage/docker-reinstall-apps', authenticateTokenOrFirstTime, asyn
     });
   }
 });
+
+// ============================================================
+// DÉSACTIVÉ POUR L INSTANT — endpoints d agrandissement du /data VPS
+// (upgrade du disque système OVH). Le code est prêt et testé
+// (truncate + losetup -c + btrfs resize, garde-fou anti-overcommit),
+// à réactiver quand l option "upgrade de stockage" sera ouverte
+// côté Ryvie Cloud : décommenter le bloc ci-dessous puis npx tsc.
+// ============================================================
+// /**
+//  * GET /api/storage/vps-storage-status
+//  * État du stockage /data sur VPS (image loopback) : taille, utilisation,
+//  * marge de croissance possible sur le disque système.
+//  */
+// router.get('/storage/vps-storage-status', authenticateTokenOrFirstTime, async (req: any, res: any) => {
+//   try {
+//     const sourceResult = await executeCommand('findmnt', ['-no', 'SOURCE', '/data']);
+//     const source = sourceResult.stdout.trim();
+//     if (!/^\/dev\/loop\d+$/.test(source)) {
+//       return res.json({ success: true, loopback: false, source, message: '/data n\'est pas une image loopback' });
+//     }
+// 
+//     const backingResult = await executeCommand('sudo', ['-n', 'losetup', '-n', '-O', 'BACK-FILE', source]);
+//     const backingFile = backingResult.stdout.trim();
+// 
+//     // Taille apparente et blocs réellement alloués de l'image
+//     const statResult = await executeCommand('stat', ['-c', '%s %b %B', backingFile]);
+//     const [apparentStr, blocksStr, blockSizeStr] = statResult.stdout.trim().split(/\s+/);
+//     const apparentBytes = parseInt(apparentStr) || 0;
+//     const allocatedBytes = (parseInt(blocksStr) || 0) * (parseInt(blockSizeStr) || 512);
+// 
+//     // Espace libre sur le filesystem hébergeant l'image
+//     const dfResult = await executeCommand('df', ['-B1', '--output=avail', backingFile.replace(/\/[^/]+$/, '') || '/']);
+//     const freeBytes = parseInt(dfResult.stdout.trim().split('\n').pop() || '0') || 0;
+// 
+//     // Marge de croissance : le non-encore-écrit de l'image + 10 GiB de marge OS
+//     const marginBytes = 10 * 1024 * 1024 * 1024;
+//     const committedBytes = apparentBytes - allocatedBytes; // espace promis mais pas encore consommé
+//     const growableBytes = Math.max(0, freeBytes - committedBytes - marginBytes);
+// 
+//     const usedResult = await getBtrfsUsedBytes('/data');
+// 
+//     res.json({
+//       success: true,
+//       loopback: true,
+//       source,
+//       backingFile,
+//       imageApparentBytes: apparentBytes,
+//       imageAllocatedBytes: allocatedBytes,
+//       dataUsedBytes: usedResult,
+//       systemFreeBytes: freeBytes,
+//       growableBytes,
+//       growableGB: Math.floor(growableBytes / 1024 / 1024 / 1024)
+//     });
+//   } catch (error: any) {
+//     res.status(500).json({ success: false, error: 'Failed to get VPS storage status', details: error.message });
+//   }
+// });
+// 
+// /**
+//  * POST /api/storage/vps-storage-grow
+//  * Agrandit À CHAUD le /data d'un VPS (image loopback) après un upgrade du
+//  * disque système (ex: OVH 75 → 150 Go). Aucune coupure :
+//  *   1. truncate -s +N Go sur l'image (sparse)
+//  *   2. losetup -c (le device loop relit la taille)
+//  *   3. btrfs filesystem resize max /data
+//  * Garde-fou anti-overcommit : l'espace « promis » total de l'image ne doit
+//  * jamais dépasser l'espace libre réel moins 10 GiB de marge OS.
+//  * Body: { addGB: number, dryRun?: boolean }
+//  */
+// router.post('/storage/vps-storage-grow', authenticateTokenOrFirstTime, async (req: any, res: any) => {
+//   const { addGB, dryRun = false } = req.body;
+//   const logs: any[] = [];
+//   const log = (message: string, type = 'info') => {
+//     const entry = { timestamp: new Date().toISOString(), type, message };
+//     logs.push(entry);
+//     console.log(`[vps-grow] [${type}] ${message}`);
+//     if (io) io.emit('mdraid-log', entry);
+//   };
+// 
+//   try {
+//     const addGBNum = parseInt(addGB);
+//     if (!addGBNum || addGBNum < 1 || addGBNum > 10000) {
+//       return res.status(400).json({ success: false, error: 'addGB invalide (1-10000 attendu)' });
+//     }
+// 
+//     // /data doit être une image loopback
+//     const sourceResult = await executeCommand('findmnt', ['-no', 'SOURCE,FSTYPE', '/data']);
+//     const [source, fstype] = sourceResult.stdout.trim().split(/\s+/);
+//     if (fstype !== 'btrfs' || !/^\/dev\/loop\d+$/.test(source || '')) {
+//       return res.status(400).json({
+//         success: false,
+//         error: `/data n'est pas une image loopback btrfs (source: ${source || 'inconnu'}) — utiliser la gestion RAID sur appliance`
+//       });
+//     }
+// 
+//     const backingResult = await executeCommand('sudo', ['-n', 'losetup', '-n', '-O', 'BACK-FILE', source]);
+//     const backingFile = backingResult.stdout.trim();
+//     if (!backingFile.startsWith('/')) {
+//       return res.status(500).json({ success: false, error: `Impossible de déterminer le fichier image de ${source}` });
+//     }
+//     log(`Image loopback: ${backingFile} (${source})`, 'info');
+// 
+//     // Garde-fou anti-overcommit
+//     const statResult = await executeCommand('stat', ['-c', '%s %b %B', backingFile]);
+//     const [apparentStr, blocksStr, blockSizeStr] = statResult.stdout.trim().split(/\s+/);
+//     const apparentBytes = parseInt(apparentStr) || 0;
+//     const allocatedBytes = (parseInt(blocksStr) || 0) * (parseInt(blockSizeStr) || 512);
+//     const dfResult = await executeCommand('df', ['-B1', '--output=avail', '/']);
+//     const freeBytes = parseInt(dfResult.stdout.trim().split('\n').pop() || '0') || 0;
+// 
+//     const addBytes = addGBNum * 1024 * 1024 * 1024;
+//     const marginBytes = 10 * 1024 * 1024 * 1024;
+//     log(`Image: ${(apparentBytes / 1073741824).toFixed(1)} GiB apparents, ${(allocatedBytes / 1073741824).toFixed(1)} GiB alloués | Libre sur /: ${(freeBytes / 1073741824).toFixed(1)} GiB`, 'info');
+// 
+//     // L'espace ajouté est « promis » à /data : il doit tenir dans le libre
+//     // actuel de / en préservant 10 GiB de marge pour l'OS.
+//     if (addBytes > freeBytes - marginBytes) {
+//       const maxAddGB = Math.max(0, Math.floor((freeBytes - marginBytes) / 1024 / 1024 / 1024));
+//       log(`❌ Croissance refusée: ${addGBNum} GiB demandés, maximum sûr ${maxAddGB} GiB (marge OS 10 GiB préservée)`, 'error');
+//       return res.status(400).json({
+//         success: false,
+//         error: `Espace insuffisant sur le disque système: maximum ${maxAddGB} GiB ajoutables (marge OS de 10 GiB préservée)`,
+//         maxAddGB,
+//         logs
+//       });
+//     }
+// 
+//     if (dryRun) {
+//       log('🔍 DRY RUN — aucune modification', 'warning');
+//       log(`truncate -s +${addGBNum}G ${backingFile}`, 'info');
+//       log(`losetup -c ${source}`, 'info');
+//       log(`btrfs filesystem resize max /data`, 'info');
+//       return res.json({ success: true, dryRun: true, logs });
+//     }
+// 
+//     // 1. Agrandir l'image (sparse — instantané)
+//     const truncResult = await executeCommand('sudo', ['-n', 'truncate', '-s', `+${addGBNum}G`, backingFile]);
+//     if (truncResult.exitCode !== 0) {
+//       throw new Error(`truncate a échoué: ${(truncResult.stderr || '').trim()}`);
+//     }
+//     log(`✓ Image agrandie de ${addGBNum} GiB`, 'success');
+// 
+//     // 2. Le device loop relit la taille du fichier
+//     const capResult = await executeCommand('sudo', ['-n', 'losetup', '-c', source]);
+//     if (capResult.exitCode !== 0) {
+//       throw new Error(`losetup -c a échoué: ${(capResult.stderr || '').trim()}`);
+//     }
+//     log('✓ Device loop mis à jour', 'success');
+// 
+//     // 3. btrfs occupe le nouvel espace — à chaud, aucune coupure
+//     const resizeResult = await btrfsResizeMax('/data');
+//     if (resizeResult.exitCode !== 0) {
+//       throw new Error(`btrfs resize a échoué: ${(resizeResult.stderr || '').trim()}`);
+//     }
+//     log('✓ Filesystem /data agrandi (zéro coupure)', 'success');
+// 
+//     const dfData = await executeCommand('df', ['-h', '/data']);
+//     log(dfData.stdout.trim(), 'info');
+// 
+//     res.json({ success: true, addedGB: addGBNum, logs, message: `/data agrandi de ${addGBNum} GiB à chaud` });
+//   } catch (error: any) {
+//     console.error('Error growing VPS storage:', error);
+//     log(`Fatal error: ${error.message}`, 'error');
+//     res.status(500).json({ success: false, error: 'Failed to grow VPS storage', details: error.message, logs });
+//   }
+// });
 
 /**
  * POST /api/storage/mdraid-activate
@@ -4297,7 +4341,7 @@ router.post('/storage/mdraid-reshape', authenticateTokenOrFirstTime, async (req:
     // Filesystem resize
     log(`Step ${stepNum}: Resizing btrfs filesystem`, 'info');
     try {
-      await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+      await btrfsResizeMax('/data');
       log('✓ Filesystem resized to use full RAID capacity', 'success');
     } catch (error: any) {
       log(`Warning: Could not resize btrfs filesystem (may need to retry after reshape completes): ${error.message}`, 'warning');
@@ -4758,7 +4802,7 @@ router.post('/storage/mdraid-smart-setup', authenticateTokenOrFirstTime, async (
 
       // Resize btrfs
       try {
-        await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+        await btrfsResizeMax('/data');
         log('✓ Filesystem resized', 'success');
       } catch (e: any) {
         log(`Warning btrfs resize: ${e.message}`, 'warning');
@@ -4823,7 +4867,7 @@ router.post('/storage/mdraid-smart-setup', authenticateTokenOrFirstTime, async (
           }
 
           try {
-            await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+            await btrfsResizeMax('/data');
             log('✓ Filesystem resized after reshape', 'success');
           } catch (e: any) {}
         }
@@ -4881,7 +4925,7 @@ router.post('/storage/mdraid-smart-setup', authenticateTokenOrFirstTime, async (
 
     // Resize btrfs to use full capacity after all operations
     try {
-      await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+      await btrfsResizeMax('/data');
       log('✓ Filesystem resized to use full RAID capacity', 'success');
     } catch (e: any) {
       log(`Warning: Could not resize btrfs filesystem: ${e.message}`, 'warning');
@@ -5190,7 +5234,7 @@ router.post('/storage/mdraid-grow-size', authenticateTokenOrFirstTime, async (re
     // Step 4: Resize btrfs filesystem
     log('Step 4: Resizing btrfs filesystem...', 'step');
     try {
-      await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+      await btrfsResizeMax('/data');
       log('✓ Btrfs filesystem resized to maximum', 'success');
     } catch (btrfsErr: any) {
       log(`Warning: btrfs resize: ${btrfsErr.message}`, 'warning');
@@ -5765,7 +5809,7 @@ router.post('/storage/mdraid-auto-migrate', authenticateTokenOrFirstTime, async 
       log('Resizing btrfs filesystem...', 'info');
       setStep(2, { message: 'Redimensionnement du filesystem...' });
       try {
-        await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+        await btrfsResizeMax('/data');
         log('Filesystem resized', 'success');
       } catch (e: any) {
         log(`Warning btrfs resize: ${e.message}`, 'warning');
@@ -5958,7 +6002,7 @@ router.post('/storage/mdraid-auto-migrate', authenticateTokenOrFirstTime, async 
 
       // Resize btrfs after reshape (capacity may have increased)
       try {
-        await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+        await btrfsResizeMax('/data');
         log('Filesystem resized after reshape', 'success');
       } catch (e: any) {
         log(`Warning btrfs resize: ${e.message}`, 'warning');
@@ -6048,7 +6092,7 @@ router.post('/storage/mdraid-auto-migrate', authenticateTokenOrFirstTime, async 
 
       // Resize btrfs after adding disks (capacity increased)
       try {
-        await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+        await btrfsResizeMax('/data');
         log('Filesystem resized after disk addition', 'success');
       } catch (e: any) {
         log(`Warning btrfs resize: ${e.message}`, 'warning');
@@ -6069,7 +6113,7 @@ router.post('/storage/mdraid-auto-migrate', authenticateTokenOrFirstTime, async 
     // (earlier resizes may fail if reshape was still settling)
     try {
       await executeCommand('sleep', ['2']);
-      const resizeResult = await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', '/data']);
+      const resizeResult = await btrfsResizeMax('/data');
       if (resizeResult.exitCode === 0) {
         log('✓ Filesystem resized to full array capacity', 'success');
       }
@@ -6123,8 +6167,8 @@ router.post('/storage/mdraid-auto-migrate', authenticateTokenOrFirstTime, async 
 // Déplace le data-root Docker + containerd d'une partition/disque vers une autre
 // (avec agrandissement optionnel de la partition cible). Copie complète (rsync
 // -aHAX --numeric-ids) qui préserve images/conteneurs/volumes nommés. Orchestration
-// idempotente, persistée, reprenable après un reboot (agrandir une partition racine
-// montée nécessite un reboot pour relire la table de partition).
+// idempotente et persistée. L'agrandissement se fait entièrement à chaud : aucun
+// reboot n'est nécessaire, même pour la partition racine montée.
 // ============================================================================
 
 interface DockerMoveStep {
@@ -6144,8 +6188,10 @@ interface DockerMoveState {
   targetMount: string;
   targetDockerDir: string;
   targetContainerdDir: string;
-  // Agrandissement
+  // Agrandissement / récupération d'espace
   growRequested: boolean;
+  reclaimRequested: boolean;
+  recreateSwapSize: number; // conservé pour compatibilité d'état (plus utilisé : le swap est recréé en partition, à chaud)
   targetDisk: string | null;
   targetPartNum: number | null;
   partTable: 'msdos' | 'gpt' | null;
@@ -6175,7 +6221,7 @@ function emptyDockerMoveState(): DockerMoveState {
     id: null, status: 'idle',
     sourceDockerDir: '/data/docker', sourceContainerdDir: '/data/containerd',
     targetMount: '', targetDockerDir: '', targetContainerdDir: '',
-    growRequested: false, targetDisk: null, targetPartNum: null, partTable: null, targetIsRoot: false,
+    growRequested: false, reclaimRequested: false, recreateSwapSize: 0, targetDisk: null, targetPartNum: null, partTable: null, targetIsRoot: false,
     resumePhase: 'START', rebootExpected: false, rebootCount: 0,
     preEngineId: null, preContainerCount: null,
     currentStep: -1, totalSteps: 0, steps: [], globalProgress: 0,
@@ -6321,45 +6367,151 @@ async function dmPartedInfo(disk: string): Promise<PartedInfo | null> {
 }
 
 // Analyse la faisabilité de l'agrandissement de la partition cible.
-// Retourne { supported, reason, swapPartNum, swapSize } ; supported=false => on peut
-// quand même déplacer Docker, mais sans agrandir.
+// Règle unique, volontairement simple : la cible peut grossir si elle n'est
+// suivie de RIEN, ou uniquement d'un swap (recréé à l'identique tout au bout du
+// disque). Dans les deux cas l'opération se fait à chaud, sans reboot.
 async function dmAnalyzeGrow(disk: string, partNum: number): Promise<{
   supported: boolean; reason: string; alreadyMax: boolean;
   swapPartNum: number | null; swapSize: number; table: string;
+  growableBytes: number;
 }> {
-  const info = await dmPartedInfo(disk);
-  if (!info) return { supported: false, reason: 'Lecture de la table de partition impossible', alreadyMax: false, swapPartNum: null, swapSize: 0, table: '' };
-  const target = info.partitions.find(p => p.num === partNum);
-  if (!target) return { supported: false, reason: 'Partition cible introuvable', alreadyMax: false, swapPartNum: null, swapSize: 0, table: info.table };
   const MiB = 1024 * 1024;
-  // Partitions situées après la cible
+  const info = await dmPartedInfo(disk);
+  const nope = (reason: string, swapPartNum: number | null = null, swapSize = 0) => ({
+    supported: false, reason, alreadyMax: false, swapPartNum, swapSize,
+    table: info ? String(info.table) : '', growableBytes: 0
+  });
+  if (!info) return nope('Lecture de la table de partition impossible');
+  const target = info.partitions.find(p => p.num === partNum);
+  if (!target) return nope('Partition cible introuvable');
+
   const after = info.partitions.filter(p => p.start > target.start).sort((a, b) => a.start - b.start);
-  const freeTail = info.diskSize - target.end;
+  const freeTail = Math.max(0, info.diskSize - target.end);
+
+  // Cas 1 : la cible est la dernière partition — elle prend toute la queue libre.
   if (after.length === 0) {
-    // Cible = dernière partition
-    if (freeTail < 64 * MiB) return { supported: true, reason: 'Déjà au maximum', alreadyMax: true, swapPartNum: null, swapSize: 0, table: info.table };
-    return { supported: true, reason: '', alreadyMax: false, swapPartNum: null, swapSize: 0, table: info.table };
+    if (freeTail < 64 * MiB) {
+      return { supported: true, reason: 'Déjà au maximum', alreadyMax: true, swapPartNum: null, swapSize: 0, table: info.table, growableBytes: 0 };
+    }
+    return { supported: true, reason: '', alreadyMax: false, swapPartNum: null, swapSize: 0, table: info.table, growableBytes: freeTail };
   }
+
+  // Cas 2 : un swap, et rien d'autre, suit la cible — on le remet en fin de
+  // disque et la cible récupère l'espace libéré + la queue libre.
   const next = after[0];
   const isSwap = /swap/i.test(next.fs) || /swap/i.test(next.name);
-  const nextIsLast = after.length === 1;
-  if (isSwap && nextIsLast && info.table === 'gpt') {
-    return { supported: true, reason: '', alreadyMax: false, swapPartNum: next.num, swapSize: next.size, table: info.table };
+  if (!isSwap || after.length > 1) {
+    return nope('Une partition non-swap suit la cible — agrandissement non sûr');
   }
-  if (isSwap && info.table !== 'gpt') {
-    return { supported: false, reason: 'Déplacement du swap non supporté sur table msdos (risque partition étendue)', alreadyMax: false, swapPartNum: next.num, swapSize: next.size, table: info.table };
+  if (info.table !== 'gpt') {
+    return nope('Déplacement du swap non supporté sur table msdos (risque partition étendue)', next.num, next.size);
   }
-  return { supported: false, reason: 'Une partition non-swap suit la cible — agrandissement non sûr', alreadyMax: false, swapPartNum: null, swapSize: 0, table: info.table };
+  // Le swap garde sa taille, mais tout au bout : le gain net pour la cible est
+  // l'espace qui la suit moins la taille du swap.
+  const growableBytes = Math.max(0, freeTail - next.size);
+  if (growableBytes < 64 * MiB) {
+    return { supported: true, reason: 'Déjà au maximum', alreadyMax: true, swapPartNum: next.num, swapSize: next.size, table: info.table, growableBytes: 0 };
+  }
+  return { supported: true, reason: '', alreadyMax: false, swapPartNum: next.num, swapSize: next.size, table: info.table, growableBytes };
+}
+
+// Outils requis par l'agrandissement. Test via sudo : sfdisk/sgdisk vivent dans
+// /usr/sbin, absent du PATH d'un shell non-login mais présent dans le
+// secure_path de sudo.
+const DM_GROW_TOOLS = ['sfdisk', 'sgdisk', 'partx', 'parted', 'mkswap', 'blkid'];
+
+async function dmMissingGrowTools(): Promise<string[]> {
+  const missing: string[] = [];
+  for (const tool of DM_GROW_TOOLS) {
+    const r = await executeCommand('sudo', ['-n', 'sh', '-c', `command -v ${tool} >/dev/null 2>&1`]);
+    if (r.exitCode !== 0) missing.push(tool);
+  }
+  return missing;
+}
+
+// Vue NOYAU d'une partition, en secteurs de 512 o (/sys ne ment jamais).
+async function dmSysVal(part: string, field: 'start' | 'size'): Promise<number> {
+  const base = part.replace('/dev/', '');
+  const r = await executeCommand('cat', [`/sys/class/block/${base}/${field}`]);
+  return parseInt(r.stdout.trim()) || 0;
+}
+
+// Dernier secteur utilisable (le GPT réserve une copie de table en fin de disque).
+async function dmLastUsableSector(disk: string, diskSizeBytes: number): Promise<number> {
+  const r = await executeCommand('sudo', ['-n', 'sgdisk', '-p', disk]);
+  const m = `${r.stdout}`.match(/last usable sector is (\d+)/i);
+  if (m) return parseInt(m[1]);
+  return Math.max(0, Math.floor(diskSizeBytes / 512) - 34);
+}
+
+// Réécrit /etc/fstab via sudo, à partir d'un transformateur de lignes.
+async function dmRewriteFstab(transform: (lines: string[]) => string[]): Promise<void> {
+  const fsMod = require('fs');
+  const cur = await executeCommand('cat', ['/etc/fstab']);
+  const out = transform(cur.stdout.split('\n')).join('\n').replace(/\n+$/, '\n');
+  const tmp = `/tmp/fstab.ryvie.${Date.now()}`;
+  fsMod.writeFileSync(tmp, out);
+  await executeCommandStrict('sudo', ['-n', 'cp', tmp, '/etc/fstab'], 'écriture /etc/fstab');
+  fsMod.unlinkSync(tmp);
+}
+
+// Agrandit en ligne le système de fichiers monté sur `mount` à la taille de sa
+// partition (btrfs, ext2/3/4 et xfs savent tous le faire à chaud).
+async function dmResizeFilesystem(mount: string): Promise<void> {
+  const fsType = (await executeCommand('findmnt', ['-no', 'FSTYPE', mount])).stdout.trim();
+  if (fsType === 'btrfs') {
+    const r = await btrfsResizeMax(mount);
+    if (r.exitCode !== 0 && !/nothing to do|no change/i.test(r.stderr)) {
+      throw new Error(`btrfs resize a échoué: ${r.stderr.trim()}`);
+    }
+  } else if (/^ext[234]$/.test(fsType)) {
+    const dev = await dmMountSource(mount);
+    const r = await executeCommand('sudo', ['-n', 'resize2fs', dev || '']);
+    if (r.exitCode !== 0 && !/nothing to do/i.test(`${r.stdout} ${r.stderr}`)) {
+      throw new Error(`resize2fs a échoué: ${r.stderr.trim()}`);
+    }
+  } else if (fsType === 'xfs') {
+    const r = await executeCommand('sudo', ['-n', 'xfs_growfs', mount]);
+    if (r.exitCode !== 0) throw new Error(`xfs_growfs a échoué: ${r.stderr.trim()}`);
+  } else {
+    throw new Error(`Système de fichiers ${fsType || 'inconnu'} non agrandissable à chaud`);
+  }
 }
 
 // --- Steps -----------------------------------------------------------------
 
-// Agrandit la partition cible (relocalise le swap en fin de disque si nécessaire).
+// Récupère l'espace disque (anciennes installs + zones libres) à chaud via
+// btrfs device add. Utilisé par l'endpoint autonome de récupération d'espace.
+async function dmReclaimSpace(): Promise<void> {
+  const st = dockerMoveState;
+  setStepDM('reclaim-space', { status: 'running', message: 'Ajout de l\'espace (btrfs device add)...', progress: 20 });
+  const result = await drReclaimRun((m) => logDM(m, 'info'), { free: !!st.growRequested, orphans: !!st.reclaimRequested });
+  const gib = (result.newSizeBytes / (1024 ** 3)).toFixed(1);
+  setStepDM('reclaim-space', { status: 'completed', message: `Racine agrandie à ${gib} GiB`, progress: 100 });
+}
+
+// ---------------------------------------------------------------------------
+// AGRANDISSEMENT DE LA PARTITION CIBLE — un seul step, à chaud, SANS REBOOT.
+//
+//   1. si un swap suit la cible : swapoff, suppression (table + vue noyau) et
+//      recréation à l'identique tout au bout du disque ;
+//   2. la cible est étendue jusqu'à l'espace libre suivant, via sfdisk `,+` :
+//      le secteur de DÉPART est préservé et la nouvelle taille est poussée au
+//      noyau partition par partition (BLKPG), ce qui fonctionne même sur une
+//      racine montée. C'est `partprobe` qui échoue dans ce cas, pas le noyau —
+//      d'où l'usage de `partx --nr` pour les relectures ciblées ;
+//   3. le système de fichiers est agrandi en ligne.
+//
+// Aucune donnée n'est déplacée : seule la FIN de la partition bouge. En cas
+// d'échec de la relecture noyau, on s'arrête sans avoir touché au contenu.
+// ---------------------------------------------------------------------------
 async function dmGrowPartition(): Promise<void> {
   const st = dockerMoveState;
-  setStepDM('grow-partition', { status: 'running', message: 'Analyse de la partition cible...', progress: 10 });
-  const disk = st.targetDisk!; const partNum = st.targetPartNum!;
   const MiB = 1024 * 1024;
+  setStepDM('grow-partition', { status: 'running', message: 'Analyse de la partition cible...', progress: 5 });
+  const disk = st.targetDisk!; const partNum = st.targetPartNum!;
+  const part = dmPartPath(disk, partNum);
+
   const analysis = await dmAnalyzeGrow(disk, partNum);
   st.partTable = (analysis.table === 'msdos' || analysis.table === 'gpt') ? analysis.table : st.partTable;
   if (!analysis.supported) throw new Error(`Agrandissement impossible: ${analysis.reason}`);
@@ -6368,133 +6520,117 @@ async function dmGrowPartition(): Promise<void> {
     setStepDM('grow-partition', { status: 'skipped', message: 'Déjà au maximum', progress: 100 });
     return;
   }
+  const missing = await dmMissingGrowTools();
+  if (missing.length) {
+    throw new Error(`Outils manquants pour l'agrandissement: ${missing.join(', ')}`);
+  }
 
-  const info = await dmPartedInfo(disk);
-  if (!info) throw new Error('Lecture parted impossible');
-  const target = info.partitions.find(p => p.num === partNum)!;
+  // Géométrie de référence, relevée AVANT toute modification.
+  const startBefore = await dmSysVal(part, 'start');
+  const sectorsBefore = await dmSysVal(part, 'size');
+  if (startBefore <= 0 || sectorsBefore <= 0) {
+    throw new Error(`Impossible de lire la géométrie noyau de ${part}`);
+  }
+  const endBefore = (await dmPartedInfo(disk))?.partitions.find(p => p.num === partNum)?.end || 0;
 
+  // --- 1. Le swap repart en fin de disque ---------------------------------
   if (analysis.swapPartNum !== null && analysis.swapSize > 0) {
-    // Relocalisation du swap (GPT, swap juste après la cible et dernière partition)
-    const swapPart = dmPartPath(disk, analysis.swapPartNum);
-    // Idempotence: si la partition swap actuelle commence déjà juste après une cible agrandie, ne rien faire
-    logDM(`Déplacement du swap ${swapPart} en fin de disque...`, 'info');
-    setStepDM('grow-partition', { message: 'Déplacement du swap...', progress: 25 });
-    await executeCommand('sudo', ['-n', 'swapoff', swapPart]);
-    // Retirer la ligne swap de /etc/fstab (par UUID du device)
-    try {
-      const uuidR = await executeCommand('sudo', ['-n', 'blkid', '-o', 'value', '-s', 'UUID', swapPart]);
-      const oldUuid = uuidR.stdout.trim();
-      if (oldUuid) {
-        const fstab = await executeCommand('cat', ['/etc/fstab']);
-        const fs = require('fs');
-        const filtered = fstab.stdout.split('\n').filter(l => !l.includes(oldUuid)).join('\n') + '\n';
-        const tmp = '/tmp/fstab.dm.new';
-        fs.writeFileSync(tmp, filtered);
-        await executeCommand('sudo', ['-n', 'cp', tmp, '/etc/fstab']);
-        fs.unlinkSync(tmp);
-      }
-    } catch (e: any) { logDM(`Avert. nettoyage fstab swap: ${e.message}`, 'warning'); }
-    // Supprimer l'ancienne partition swap
-    await executeCommandStrict('sudo', ['-n', 'sgdisk', '-d', String(analysis.swapPartNum), disk], 'sgdisk delete swap');
-    // Agrandir la cible en laissant swapSize à la fin
-    const newTargetEndMiB = Math.floor((info.diskSize - analysis.swapSize) / MiB) - 1;
-    setStepDM('grow-partition', { message: 'Agrandissement de la partition...', progress: 55 });
-    await executeCommandStrict('sudo', ['-n', 'parted', '-s', disk, 'resizepart', String(partNum), `${newTargetEndMiB}MiB`], 'resizepart');
-    // Recréer le swap en fin de disque (type 8200)
-    await executeCommandStrict('sudo', ['-n', 'sgdisk', '-n', `${analysis.swapPartNum}:${newTargetEndMiB + 1}MiB:0`, '-t', `${analysis.swapPartNum}:8200`, '-c', `${analysis.swapPartNum}:swap`, disk], 'sgdisk recreate swap');
-    await executeCommand('sudo', ['-n', 'partprobe', disk]);
-    await executeCommand('sudo', ['-n', 'udevadm', 'settle', '--timeout=10']);
-    const newSwap = dmPartPath(disk, analysis.swapPartNum);
-    await executeCommandStrict('sudo', ['-n', 'mkswap', newSwap], 'mkswap');
-    await executeCommand('sudo', ['-n', 'swapon', newSwap]);
-    // Réécrire fstab avec le nouvel UUID
-    try {
-      const uuidR = await executeCommand('sudo', ['-n', 'blkid', '-o', 'value', '-s', 'UUID', newSwap]);
-      const newUuid = uuidR.stdout.trim();
-      if (newUuid) {
-        const fstab = await executeCommand('cat', ['/etc/fstab']);
-        const fs = require('fs');
-        const content = fstab.stdout.replace(/\n+$/, '\n') + `UUID=${newUuid} none swap sw 0 0\n`;
-        const tmp = '/tmp/fstab.dm2.new';
-        fs.writeFileSync(tmp, content);
-        await executeCommand('sudo', ['-n', 'cp', tmp, '/etc/fstab']);
-        fs.unlinkSync(tmp);
-      }
-    } catch (e: any) { logDM(`Avert. écriture fstab swap: ${e.message}`, 'warning'); }
-    logDM('✓ Swap relocalisé en fin de disque', 'success');
-  } else {
-    // Cible = dernière partition, juste agrandir à 100%
-    // Idempotence: si déjà quasi à la taille disque, sauter
-    if (info.diskSize - target.end < 64 * MiB) {
-      setStepDM('grow-partition', { status: 'skipped', message: 'Déjà au maximum', progress: 100 });
-      return;
+    const swapNum = analysis.swapPartNum;
+    const oldSwap = dmPartPath(disk, swapNum);
+    setStepDM('grow-partition', { message: 'Déplacement du swap en fin de disque...', progress: 15 });
+
+    // Désactivation STRICTE si le swap est réellement actif : sans ça, sgdisk
+    // supprimerait une partition en cours d'utilisation.
+    const swaps = await executeCommand('cat', ['/proc/swaps']);
+    if (swaps.stdout.includes(oldSwap)) {
+      await executeCommandStrict('sudo', ['-n', 'swapoff', oldSwap], `swapoff ${oldSwap}`);
+      const still = await executeCommand('cat', ['/proc/swaps']);
+      if (still.stdout.includes(oldSwap)) throw new Error(`${oldSwap} est toujours actif après swapoff — abandon`);
+      logDM(`Swap ${oldSwap} désactivé`, 'info');
     }
-    setStepDM('grow-partition', { message: 'Agrandissement de la partition...', progress: 55 });
-    await executeCommandStrict('sudo', ['-n', 'parted', '-s', disk, 'resizepart', String(partNum), '100%'], 'resizepart');
+    const oldUuid = (await executeCommand('sudo', ['-n', 'blkid', '-o', 'value', '-s', 'UUID', oldSwap])).stdout.trim();
+
+    // Suppression : table, puis vue noyau (partx -d est indispensable pour que
+    // le noyau libère l'espace ; partprobe échoue sur un disque monté).
+    await executeCommandStrict('sudo', ['-n', 'sgdisk', '-d', String(swapNum), disk], 'suppression du swap (sgdisk)');
+    await executeCommand('sudo', ['-n', 'partx', '-d', '--nr', String(swapNum), disk]);
+    await executeCommand('sudo', ['-n', 'udevadm', 'settle', '--timeout=10']);
+
+    // Recréation à l'identique, alignée 1 MiB, collée au dernier secteur utilisable.
+    const info = await dmPartedInfo(disk);
+    const lastUsable = await dmLastUsableSector(disk, info ? info.diskSize : 0);
+    const swapSectors = Math.ceil(analysis.swapSize / 512);
+    const align = MiB / 512;
+    const newSwapStart = Math.floor((lastUsable + 1 - swapSectors) / align) * align;
+    if (newSwapStart <= startBefore + sectorsBefore) {
+      throw new Error('Géométrie inattendue : pas de place pour recréer le swap en fin de disque');
+    }
+    const mk = await executeCommand('sudo', ['-n', 'sgdisk',
+      '-n', `${swapNum}:${newSwapStart}:${lastUsable}`,
+      '-t', `${swapNum}:8200`,
+      '-c', `${swapNum}:swap`, disk]);
+    if (mk.exitCode !== 0) throw new Error(`Recréation du swap échouée: ${(mk.stderr || mk.stdout).trim()}`);
+    await executeCommand('sudo', ['-n', 'partx', '-a', '--nr', String(swapNum), disk]);
+    await executeCommand('sudo', ['-n', 'udevadm', 'settle', '--timeout=10']);
+
+    const newSwap = dmPartPath(disk, swapNum);
+    await executeCommandStrict('sudo', ['-n', 'mkswap', newSwap], `mkswap ${newSwap}`);
+    const newUuid = (await executeCommand('sudo', ['-n', 'blkid', '-o', 'value', '-s', 'UUID', newSwap])).stdout.trim();
+
+    // fstab : l'UUID change forcément (mkswap régénère la signature), on
+    // remplace donc l'ancienne entrée par la nouvelle.
+    await dmRewriteFstab(lines => {
+      const kept = lines.filter(l => !(oldUuid && l.includes(oldUuid)));
+      return [...kept, newUuid ? `UUID=${newUuid} none swap sw 0 0` : `${newSwap} none swap sw 0 0`];
+    });
+    const on = await executeCommand('sudo', ['-n', 'swapon', newSwap]);
+    if (on.exitCode !== 0) logDM(`Swap recréé mais non activé (${on.stderr.trim()}) — il le sera au prochain démarrage`, 'warning');
+    else logDM(`✓ Swap recréé en fin de disque (${newSwap}, ${Math.round(analysis.swapSize / MiB)} MiB)`, 'success');
   }
-  await executeCommand('sudo', ['-n', 'partprobe', disk]);
+
+  // --- 2. Extension de la cible jusqu'à l'espace libre suivant -------------
+  setStepDM('grow-partition', { message: 'Extension de la partition...', progress: 55 });
+  // `, +` = on garde le début, on prend tout l'espace libre qui suit.
+  // -w/-W never : interdit à sfdisk d'effacer la moindre signature.
+  // --no-reread : évite l'abandon préalable « device is in use » (la relecture
+  // ciblée est faite juste après avec partx --nr).
+  const sf = await executeCommand('sudo', ['-n', 'sh', '-c',
+    `echo ', +' | sfdisk -N ${partNum} --force --no-reread -w never -W never ${disk} 2>&1`]);
+  const sfOut = `${sf.stdout} ${sf.stderr}`.trim();
+  if (sf.exitCode !== 0) logDM(`sfdisk (code ${sf.exitCode}): ${sfOut.slice(-300)}`, 'warning');
+
+  // La table sur DISQUE doit avoir changé, sinon rien ne s'est passé.
+  const infoAfter = await dmPartedInfo(disk);
+  const targetAfter = infoAfter?.partitions.find(p => p.num === partNum);
+  if (!targetAfter || targetAfter.end <= endBefore) {
+    throw new Error(`L'extension de ${part} n'a pas été écrite: ${sfOut.slice(-300) || 'erreur inconnue'}`);
+  }
+  if (Math.abs(Math.floor(targetAfter.start / 512) - startBefore) > 2) {
+    throw new Error(`SÉCURITÉ: le secteur de départ de ${part} a changé dans la table (${startBefore} → ${Math.floor(targetAfter.start / 512)}) — arrêt avant tout dommage`);
+  }
+
+  // Relecture CIBLÉE : une seule partition, autorisée à chaud (BLKPG).
+  await executeCommand('sudo', ['-n', 'partx', '-u', '--nr', String(partNum), disk]);
   await executeCommand('sudo', ['-n', 'udevadm', 'settle', '--timeout=10']);
-  logDM('✓ Partition agrandie', 'success');
-  setStepDM('grow-partition', { status: 'completed', message: 'Partition agrandie', progress: 100 });
-}
 
-// Fait relire la nouvelle taille de partition au noyau ; reboot si nécessaire (racine montée).
-async function dmGrowReread(): Promise<void> {
-  const st = dockerMoveState;
-  setStepDM('grow-reread', { status: 'running', message: 'Relecture de la table de partition...', progress: 30 });
-  const disk = st.targetDisk!; const partNum = st.targetPartNum!;
-  const part = dmPartPath(disk, partNum);
-  await executeCommand('sudo', ['-n', 'partx', '-u', disk]);
-  await executeCommand('sudo', ['-n', 'partprobe', disk]);
-  await executeCommand('sudo', ['-n', 'udevadm', 'settle', '--timeout=10']);
-
-  // Taille attendue (parted) vs vue noyau (/sys)
-  const info = await dmPartedInfo(disk);
-  const target = info?.partitions.find(p => p.num === partNum);
-  const expectedSectors = target ? Math.floor(target.size / 512) : 0;
-  const partBase = part.replace('/dev/', '');
-  const sysR = await executeCommand('cat', [`/sys/class/block/${partBase}/size`]);
-  const kernelSectors = parseInt(sysR.stdout.trim()) || 0;
-  // Tolérance 1% (arrondis parted/512o)
-  const upToDate = expectedSectors > 0 && kernelSectors >= expectedSectors * 0.99;
-
-  if (upToDate) {
-    logDM('✓ Table de partition relue par le noyau (pas de reboot nécessaire)', 'success');
-    setStepDM('grow-reread', { status: 'completed', message: 'Table relue', progress: 100 });
-    return;
+  // --- 3. Garde-fous sur la vue noyau -------------------------------------
+  const startAfter = await dmSysVal(part, 'start');
+  if (startAfter !== startBefore) {
+    throw new Error(`SÉCURITÉ: le secteur de départ de ${part} a changé (${startBefore} → ${startAfter}) — arrêt immédiat`);
   }
-
-  if (!st.targetIsRoot) {
-    // Partition non montée en racine mais relecture échouée : réessai unique
-    throw new Error('Le noyau n\'a pas relu la nouvelle taille de partition (cible non racine)');
+  const sectorsAfter = await dmSysVal(part, 'size');
+  if (sectorsAfter <= sectorsBefore) {
+    throw new Error(`Le noyau ne voit pas la nouvelle taille de ${part} — agrandissement annulé, aucune donnée touchée`);
   }
+  const gainGiB = ((sectorsAfter - sectorsBefore) * 512 / (1024 ** 3)).toFixed(1);
+  logDM(`✓ ${part} agrandie de ${gainGiB} GiB (début préservé, sans reboot)`, 'success');
 
-  // Racine montée : reboot requis, reprise automatique au boot
-  if (st.rebootCount >= 1) {
-    throw new Error('La taille de partition n\'est toujours pas visible après un reboot — abandon');
-  }
-  logDM('Reboot nécessaire pour relire la table de partition (partition racine montée). Reprise automatique après redémarrage.', 'warning');
-  st.resumePhase = 'GROW_AWAIT_REBOOT';
-  st.rebootExpected = true;
-  st.rebootCount = (st.rebootCount || 0) + 1;
-  setStepDM('grow-reread', { status: 'running', message: 'Redémarrage en cours... reprise automatique', progress: 50 });
-  await persistDockerMoveState(st);
-  setTimeout(async () => {
-    try { await executeCommand('sudo', ['-n', 'reboot']); } catch (e: any) { console.error('reboot failed', e); }
-  }, 5000);
-  throw new RebootRequested('reboot scheduled');
-}
-
-// Agrandit le système de fichiers btrfs de la cible (online).
-async function dmGrowBtrfs(): Promise<void> {
-  const st = dockerMoveState;
-  setStepDM('grow-btrfs', { status: 'running', message: 'Agrandissement du système de fichiers...', progress: 40 });
-  const r = await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'resize', 'max', st.targetMount]);
-  if (r.exitCode !== 0 && !/nothing to do|no change/i.test(r.stderr)) {
-    throw new Error(`btrfs resize a échoué: ${r.stderr.trim()}`);
-  }
-  logDM(`✓ Système de fichiers ${st.targetMount} agrandi`, 'success');
-  setStepDM('grow-btrfs', { status: 'completed', message: 'Système de fichiers agrandi', progress: 100 });
+  // --- 4. Système de fichiers ---------------------------------------------
+  setStepDM('grow-partition', { message: 'Agrandissement du système de fichiers...', progress: 85 });
+  await dmResizeFilesystem(st.targetMount);
+  const avail = await dmMountAvail(st.targetMount);
+  logDM(`✓ ${st.targetMount} agrandi — ${Math.round(avail / 1e9)} Go disponibles`, 'success');
+  setStepDM('grow-partition', { status: 'completed', message: `Partition agrandie (+${gainGiB} GiB)`, progress: 100 });
 }
 
 async function dmPrepareTarget(): Promise<void> {
@@ -6657,8 +6793,6 @@ async function dmCleanupOld(): Promise<void> {
 
 const DM_HANDLERS: { [id: string]: () => Promise<void> } = {
   'grow-partition': dmGrowPartition,
-  'grow-reread': dmGrowReread,
-  'grow-btrfs': dmGrowBtrfs,
   'move-prepare': dmPrepareTarget,
   'move-stop': dmStopServices,
   'move-copy': dmCopy,
@@ -6666,14 +6800,15 @@ const DM_HANDLERS: { [id: string]: () => Promise<void> } = {
   'move-start': dmStartServices,
   'move-verify': dmVerify,
   'move-cleanup': dmCleanupOld,
+  'reclaim-space': dmReclaimSpace,
 };
 
-function buildDockerMoveSteps(growRequested: boolean): DockerMoveStep[] {
+function buildDockerMoveSteps(growRequested: boolean, reclaimRequested = false): DockerMoveStep[] {
   const defs: { id: string; name: string }[] = [];
+  // Agrandissement : un seul step (table + relecture noyau + système de
+  // fichiers), entièrement à chaud, sans reboot.
   if (growRequested) {
     defs.push({ id: 'grow-partition', name: 'Agrandir la partition cible' });
-    defs.push({ id: 'grow-reread', name: 'Relire la table de partition' });
-    defs.push({ id: 'grow-btrfs', name: 'Agrandir le système de fichiers' });
   }
   defs.push({ id: 'move-prepare', name: 'Préparer la cible' });
   defs.push({ id: 'move-stop', name: 'Arrêter Docker & containerd' });
@@ -6778,10 +6913,11 @@ function dmComputeTargetDirs(targetMount: string): { docker: string; containerd:
 }
 
 // Validation partagée (utilisée par prechecks ET par le POST docker-move).
-async function dmValidate(targetMount: string, growRequested: boolean): Promise<{
+async function dmValidate(targetMount: string, growRequested: boolean, reclaimRequested = false): Promise<{
   canProceed: boolean; reasons: string[];
   sourceDockerDir: string; sourceContainerdDir: string;
   requiredBytes: number; availableBytes: number;
+  growableBytes: number; reclaimableBytes: number; projectedAvailableBytes: number;
   targetDisk: string | null; targetPartNum: number | null; targetIsRoot: boolean;
   growPlan: { supported: boolean; reason: string; rebootWillBeRequired: boolean; swapRelocation: boolean; alreadyMax: boolean } | null;
 }> {
@@ -6802,16 +6938,18 @@ async function dmValidate(targetMount: string, growRequested: boolean): Promise<
   const currentMount = srcMntR.exitCode === 0 ? srcMntR.stdout.trim() : null;
   if (currentMount && currentMount === targetMount) reasons.push(`La cible ${targetMount} héberge déjà le data-root actuel`);
 
-  // Espace
+  // Besoin réel et espace actuellement disponible sur la cible
   const requiredBytes = await dmDirBytes(sourceDockerDir) + await dmDirBytes(sourceContainerdDir);
   const availableBytes = await dmMountAvail(targetMount);
-  if (requiredBytes > 0 && availableBytes < requiredBytes * 1.15) {
-    reasons.push(`Espace insuffisant sur ${targetMount}: ${Math.round(availableBytes / 1e9)} Go dispo, ~${Math.round(requiredBytes * 1.15 / 1e9)} Go requis`);
-  }
 
-  // Analyse device/partition + grow
+  // Analyse de l'agrandissement de la partition (resize dans l'espace libre adjacent).
+  // On agrandit la PARTITION cible à chaud (sfdisk + relecture ciblée partx).
+  // Aucun reboot : `rebootWillBeRequired` reste toujours false, conservé pour
+  // compatibilité avec l'API existante.
   let targetDisk: string | null = null, targetPartNum: number | null = null, targetIsRoot = false;
   let growPlan = null;
+  let growableBytes = 0;
+  const reclaimableBytes = 0;
   if (srcDev) {
     const split = dmSplitDevice(srcDev);
     if (split) { targetDisk = split.disk; targetPartNum = split.partNum; }
@@ -6819,23 +6957,37 @@ async function dmValidate(targetMount: string, growRequested: boolean): Promise<
     if (growRequested) {
       if (!split) {
         growPlan = { supported: false, reason: 'Device cible non partitionnable (RAID/LVM ?)', rebootWillBeRequired: false, swapRelocation: false, alreadyMax: false };
+        reasons.push('Agrandissement impossible: device cible non partitionnable');
       } else {
         const a = await dmAnalyzeGrow(split.disk, split.partNum);
+        // Outils : vérifiés ici pour que l'UI refuse AVANT de lancer, au lieu
+        // d'échouer au premier step.
+        const missing = a.supported && !a.alreadyMax ? await dmMissingGrowTools() : [];
+        const toolsReason = missing.length ? `outils manquants (${missing.join(', ')})` : '';
         growPlan = {
-          supported: a.supported, reason: a.reason,
-          rebootWillBeRequired: a.supported && !a.alreadyMax && targetIsRoot,
+          supported: a.supported && !toolsReason, reason: toolsReason || a.reason,
+          rebootWillBeRequired: false,
           swapRelocation: a.swapPartNum !== null,
           alreadyMax: a.alreadyMax
         };
-        if (!a.supported) reasons.push(`Agrandissement impossible: ${a.reason}`);
+        if (a.supported && !a.alreadyMax && !toolsReason) growableBytes = a.growableBytes;
+        if (!growPlan.supported) reasons.push(`Agrandissement impossible: ${growPlan.reason}`);
       }
     }
+  }
+
+  // Espace projeté = dispo actuel + place récupérée par l'agrandissement.
+  const projectedAvailableBytes = availableBytes + growableBytes;
+  if (requiredBytes > 0 && projectedAvailableBytes < requiredBytes * 1.15) {
+    const suffix = growableBytes > 0 ? ' même après agrandissement' : '';
+    reasons.push(`Espace insuffisant sur ${targetMount}${suffix}: ${Math.round(projectedAvailableBytes / 1e9)} Go dispo, ~${Math.round(requiredBytes * 1.15 / 1e9)} Go requis`);
   }
 
   return {
     canProceed: reasons.length === 0, reasons,
     sourceDockerDir, sourceContainerdDir,
     requiredBytes, availableBytes,
+    growableBytes, reclaimableBytes, projectedAvailableBytes,
     targetDisk, targetPartNum, targetIsRoot, growPlan
   };
 }
@@ -6846,11 +6998,12 @@ async function dmValidate(targetMount: string, growRequested: boolean): Promise<
  */
 router.post('/storage/docker-move-prechecks', authenticateTokenOrFirstTime, async (req: any, res: any) => {
   try {
-    const { targetMount, growRequested = false } = req.body || {};
+    const { targetMount, growRequested = false, reclaimRequested = false } = req.body || {};
     if (!targetMount || typeof targetMount !== 'string') {
       return res.status(400).json({ success: false, error: 'targetMount requis' });
     }
-    const v = await dmValidate(targetMount, !!growRequested);
+    // Agrandissement (zones libres) et récupération (anciennes partitions) sont indépendants.
+    const v = await dmValidate(targetMount, !!growRequested, !!reclaimRequested);
     const dirs = dmComputeTargetDirs(targetMount);
     res.json({
       success: true,
@@ -6858,6 +7011,9 @@ router.post('/storage/docker-move-prechecks', authenticateTokenOrFirstTime, asyn
       reasons: v.reasons,
       requiredBytes: v.requiredBytes,
       availableBytes: v.availableBytes,
+      growableBytes: v.growableBytes,
+      reclaimableBytes: v.reclaimableBytes,
+      projectedAvailableBytes: v.projectedAvailableBytes,
       targetDockerDir: dirs.docker,
       targetContainerdDir: dirs.containerd,
       growPlan: v.growPlan,
@@ -6877,7 +7033,7 @@ router.post('/storage/docker-move', authenticateTokenOrFirstTime, async (req: an
     if (dockerMoveState.status === 'running') {
       return res.status(409).json({ success: false, error: 'Un déplacement est déjà en cours' });
     }
-    const { targetMount, growRequested = false, targetDockerDir, targetContainerdDir } = req.body || {};
+    const { targetMount, growRequested = false, reclaimRequested = false, targetDockerDir, targetContainerdDir } = req.body || {};
     if (!targetMount || typeof targetMount !== 'string') {
       return res.status(400).json({ success: false, error: 'targetMount requis' });
     }
@@ -6887,6 +7043,7 @@ router.post('/storage/docker-move', authenticateTokenOrFirstTime, async (req: an
     }
     const dirs = dmComputeTargetDirs(targetMount);
     const willGrow = !!growRequested && !!(v.growPlan && v.growPlan.supported && !v.growPlan.alreadyMax);
+    const willReclaim = false;
 
     dockerMoveState = emptyDockerMoveState();
     dockerMoveState.id = `dmove-${Date.now()}`;
@@ -6897,10 +7054,11 @@ router.post('/storage/docker-move', authenticateTokenOrFirstTime, async (req: an
     dockerMoveState.targetDockerDir = targetDockerDir || dirs.docker;
     dockerMoveState.targetContainerdDir = targetContainerdDir || dirs.containerd;
     dockerMoveState.growRequested = willGrow;
+    dockerMoveState.reclaimRequested = willReclaim;
     dockerMoveState.targetDisk = v.targetDisk;
     dockerMoveState.targetPartNum = v.targetPartNum;
     dockerMoveState.targetIsRoot = v.targetIsRoot;
-    dockerMoveState.steps = buildDockerMoveSteps(willGrow);
+    dockerMoveState.steps = buildDockerMoveSteps(willGrow, willReclaim);
     dockerMoveState.totalSteps = dockerMoveState.steps.length;
     dockerMoveState.startedAt = new Date().toISOString();
     dockerMoveState.resumePhase = 'START';
@@ -6954,6 +7112,264 @@ router.post('/storage/docker-move-reset', authenticateTokenOrFirstTime, async (r
     res.json({ success: true, message: 'État réinitialisé' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ===========================================================================
+// RÉCUPÉRATION D'ESPACE DISQUE (nettoyage des anciennes installs)
+// ---------------------------------------------------------------------------
+// Récupère à chaud, sur le disque qui héberge la racine btrfs, l'espace des
+// partitions orphelines (anciennes installations : vieux @rootfs, etc.) et des
+// zones libres, en les ajoutant au système de fichiers racine via
+// `btrfs device add`. Aucun déplacement de données, aucun reboot.
+// ===========================================================================
+
+const DR_MIN_RECLAIM_BYTES = 4 * 1024 * 1024 * 1024; // on ignore les bouts < 4 GiB
+
+interface DrPartedInfo {
+  table: string;
+  diskSize: number;
+  partitions: { num: number; start: number; end: number; size: number; fs: string; name: string; flags: string }[];
+  freeRegions: { start: number; end: number; size: number }[];
+}
+
+// parted machine-readable AVEC les zones libres (`print free`)
+async function drPartedInfo(disk: string): Promise<DrPartedInfo | null> {
+  const r = await executeCommand('sudo', ['-n', 'parted', '-m', '-s', disk, 'unit', 'B', 'print', 'free']);
+  if (r.exitCode !== 0) return null;
+  const lines = r.stdout.split(';\n').map(l => l.trim()).filter(Boolean);
+  let table = ''; let diskSize = 0;
+  const partitions: DrPartedInfo['partitions'] = [];
+  const freeRegions: DrPartedInfo['freeRegions'] = [];
+  const num = (s: string) => parseInt((s || '').replace('B', '')) || 0;
+  for (const line of lines) {
+    if (line === 'BYT') continue;
+    const f = line.split(':');
+    if (f[0] === disk) {
+      diskSize = num(f[1]); table = f[5] || '';
+    } else if (f[4] === 'free') {
+      // Ligne d'espace libre : on teste le champ 'fs' AVANT le numéro pour éviter
+      // toute ambiguïté sur le premier champ selon les versions de parted.
+      freeRegions.push({ start: num(f[1]), end: num(f[2]), size: num(f[3]) });
+    } else if (/^\d+$/.test(f[0])) {
+      partitions.push({ num: parseInt(f[0]), start: num(f[1]), end: num(f[2]), size: num(f[3]), fs: f[4] || '', name: f[5] || '', flags: f[6] || '' });
+    }
+  }
+  if (!table) return null;
+  return { table, diskSize, partitions, freeRegions };
+}
+
+// UUID référencés dans /etc/fstab (à ne jamais toucher)
+async function drFstabUUIDs(): Promise<Set<string>> {
+  const set = new Set<string>();
+  try {
+    const content = fs.readFileSync('/etc/fstab', 'utf8');
+    for (const line of content.split('\n')) {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) continue;
+      const m = t.match(/^UUID=([^\s]+)/);
+      if (m) set.add(m[1]);
+    }
+  } catch { /* fstab illisible : on protège en ne récupérant rien plus bas */ }
+  return set;
+}
+
+// Partitions swap actuellement activées
+async function drActiveSwaps(): Promise<Set<string>> {
+  const set = new Set<string>();
+  const r = await executeCommand('sudo', ['-n', 'swapon', '--show=NAME', '--noheadings']);
+  if (r.exitCode === 0) r.stdout.split('\n').map(s => s.trim()).filter(Boolean).forEach(d => set.add(d));
+  return set;
+}
+
+// Devices déjà membres du btrfs cible (jamais candidats à la récupération)
+async function drBtrfsDevices(mount: string): Promise<Set<string>> {
+  const set = new Set<string>();
+  const r = await executeCommand('sudo', ['-n', 'btrfs', 'filesystem', 'show', mount]);
+  if (r.exitCode === 0) {
+    const re = /path\s+(\/dev\/\S+)/g; let m;
+    while ((m = re.exec(r.stdout))) set.add(m[1]);
+  }
+  return set;
+}
+
+async function drBlkid(dev: string): Promise<{ uuid: string; type: string }> {
+  const r = await executeCommand('sudo', ['-n', 'blkid', '-o', 'export', dev]);
+  if (r.exitCode !== 0) return { uuid: '', type: '' };
+  const uuid = (r.stdout.match(/^UUID=(.*)$/m) || [])[1] || '';
+  const type = (r.stdout.match(/^TYPE=(.*)$/m) || [])[1] || '';
+  return { uuid, type };
+}
+
+async function drIsMounted(dev: string): Promise<boolean> {
+  const r = await executeCommand('findmnt', ['-no', 'TARGET', '--source', dev]);
+  return r.exitCode === 0 && r.stdout.trim().length > 0;
+}
+
+interface DrItem {
+  kind: 'orphan-partition' | 'free-region';
+  device?: string; partNum?: number;
+  start?: number; end?: number;
+  sizeBytes: number; fsType?: string; label: string;
+}
+
+// Analyse partagée (scan lecture seule ET récupération).
+async function drScan(): Promise<{
+  canProceed: boolean; reasons: string[]; warnings: string[];
+  targetMount: string; targetDevice: string | null; disk: string | null; fsType: string;
+  currentSizeBytes: number; reclaimableBytes: number; freeSpaceBytes: number; orphanBytes: number; projectedSizeBytes: number;
+  items: DrItem[]; skipped: { device?: string; sizeBytes: number; reason: string }[];
+}> {
+  const reasons: string[] = []; const warnings: string[] = [];
+  const targetMount = '/';
+  const targetDevice = await dmMountSource(targetMount);
+  const fsR = await executeCommand('findmnt', ['-no', 'FSTYPE', targetMount]);
+  const fsType = fsR.exitCode === 0 ? fsR.stdout.trim() : '';
+  if (fsType !== 'btrfs') reasons.push(`La racine ${targetMount} n'est pas en btrfs (${fsType || 'inconnu'}) — récupération à chaud impossible`);
+  const split = targetDevice ? dmSplitDevice(targetDevice) : null;
+  if (!split) reasons.push('Device racine non partitionnable (RAID/LVM ?)');
+  const disk = split ? split.disk : null;
+
+  const info = disk ? await drPartedInfo(disk) : null;
+  if (disk && !info) reasons.push('Lecture de la table de partition impossible');
+
+  const items: DrItem[] = [];
+  const skipped: { device?: string; sizeBytes: number; reason: string }[] = [];
+
+  if (info && disk && fsType === 'btrfs') {
+    const fstabUUIDs = await drFstabUUIDs();
+    const activeSwaps = await drActiveSwaps();
+    const btrfsDevs = await drBtrfsDevices(targetMount);
+
+    for (const p of info.partitions) {
+      const dev = dmPartPath(disk, p.num);
+      if (btrfsDevs.has(dev)) continue;                    // déjà dans la racine
+      // Ne JAMAIS toucher une partition EFI/boot, même orpheline
+      if (/esp|boot/i.test(p.flags)) { skipped.push({ device: dev, sizeBytes: p.size, reason: 'partition EFI/boot (protégée)' }); continue; }
+      const bk = await drBlkid(dev);
+      const mounted = await drIsMounted(dev);
+      const inFstab = !!bk.uuid && fstabUUIDs.has(bk.uuid);
+      const isActiveSwap = activeSwaps.has(dev);
+      if (mounted || inFstab || isActiveSwap) continue;    // en cours d'utilisation
+      if (p.size < DR_MIN_RECLAIM_BYTES) { skipped.push({ device: dev, sizeBytes: p.size, reason: 'trop petite (récupérable uniquement hors-ligne)' }); continue; }
+      items.push({ kind: 'orphan-partition', device: dev, partNum: p.num, sizeBytes: p.size, fsType: bk.type || p.fs || 'inconnu', label: `Ancienne partition ${bk.type || p.fs || ''} orpheline` });
+    }
+    // Zones non allouées : chacune deviendra une nouvelle partition ajoutée à la racine.
+    for (const fr of info.freeRegions) {
+      if (fr.size < DR_MIN_RECLAIM_BYTES) continue;
+      items.push({ kind: 'free-region', start: fr.start, end: fr.end, sizeBytes: fr.size, label: 'Espace non alloué' });
+    }
+  }
+
+  const orphanBytes = items.filter(i => i.kind === 'orphan-partition').reduce((a, i) => a + i.sizeBytes, 0);
+  const freeSpaceBytes = items.filter(i => i.kind === 'free-region').reduce((a, i) => a + i.sizeBytes, 0);
+  const reclaimableBytes = orphanBytes + freeSpaceBytes;
+  const curR = await executeCommand('findmnt', ['-bno', 'SIZE', targetMount]);
+  const currentSizeBytes = curR.exitCode === 0 ? (parseInt(curR.stdout.trim()) || 0) : 0;
+
+  if (reasons.length === 0 && items.length === 0) reasons.push('Aucun espace récupérable détecté sur le disque système');
+  if (fsType === 'btrfs' && items.length > 0) warnings.push('La racine deviendra un btrfs multi-partitions. Garde un accès console/physique au prochain redémarrage pour parer à tout imprévu.');
+
+  return {
+    canProceed: reasons.length === 0 && items.length > 0, reasons, warnings,
+    targetMount, targetDevice, disk, fsType,
+    currentSizeBytes, reclaimableBytes, freeSpaceBytes, orphanBytes, projectedSizeBytes: currentSizeBytes + reclaimableBytes,
+    items, skipped
+  };
+}
+
+/**
+ * POST /api/storage/disk-reclaim-scan  (lecture seule)
+ */
+router.post('/storage/disk-reclaim-scan', authenticateTokenOrFirstTime, async (req: any, res: any) => {
+  try {
+    res.json({ success: true, ...(await drScan()) });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Exécute la récupération d'espace (wipefs + btrfs device add). Réutilisée par
+// l'endpoint autonome ET par l'étape `reclaim-space` du déplacement Docker.
+async function drReclaimRun(add: (m: string) => void, opts: { free?: boolean; orphans?: boolean } = { free: true, orphans: true }): Promise<{ newSizeBytes: number }> {
+  const scan = await drScan();
+  if (!scan.canProceed) throw new Error(`Pré-vérifications échouées: ${scan.reasons.join(' · ')}`);
+  const disk = scan.disk!; const targetMount = scan.targetMount;
+  const gib = (b: number) => `${(b / (1024 ** 3)).toFixed(1)} GiB`;
+
+  // Jeux de protection ré-évalués juste avant d'agir
+  const fstabUUIDs = await drFstabUUIDs();
+  const activeSwaps = await drActiveSwaps();
+  const btrfsDevs = await drBtrfsDevices(targetMount);
+
+  // Filtre selon ce qui est demandé (agrandissement=free, récupération=orphans)
+  const wanted = scan.items.filter(it =>
+    (it.kind === 'free-region' && opts.free !== false) ||
+    (it.kind === 'orphan-partition' && opts.orphans !== false));
+
+  for (const item of wanted) {
+    let dev: string | null = null;
+
+    if (item.kind === 'free-region') {
+      // Nouvelle partition dans l'espace non alloué (alignée 1 MiB). On ne touche
+      // JAMAIS une partition existante (donc pas de "partition is being used").
+      const MiB = 1024 * 1024;
+      const start = Math.ceil((item.start || 0) / MiB) * MiB;
+      const end = Math.floor((item.end || 0) / MiB) * MiB;
+      if (end - start < DR_MIN_RECLAIM_BYTES) { add(`⏭ Zone libre trop petite après alignement, ignorée`); continue; }
+      const before = new Set(((await drPartedInfo(disk))?.partitions || []).map(p => p.num));
+      add(`🧩 Création d'une partition dans l'espace non alloué (${gib(end - start)})...`);
+      const mk = await executeCommand('sudo', ['-n', 'sgdisk', '-n', `0:${start / 512}:${end / 512 - 1}`, '-t', '0:8300', disk]);
+      if (mk.exitCode !== 0) { add(`❌ création partition: ${mk.stderr.trim() || 'échec'}`); continue; }
+      await executeCommand('sudo', ['-n', 'partprobe', disk]);
+      await executeCommand('sudo', ['-n', 'partx', '-a', disk]); // ajoute le nouveau nœud sans toucher aux montés
+      await executeCommand('sudo', ['-n', 'udevadm', 'settle', '--timeout=10']);
+      const after = (await drPartedInfo(disk))?.partitions || [];
+      const newp = after.find(p => !before.has(p.num));
+      if (!newp) { add(`❌ Nouvelle partition introuvable après création`); continue; }
+      dev = dmPartPath(disk, newp.num);
+    } else {
+      dev = item.device!;
+      // Re-validation de sécurité (l'état a pu changer depuis le scan)
+      const bk = await drBlkid(dev);
+      if (btrfsDevs.has(dev) || await drIsMounted(dev) || (!!bk.uuid && fstabUUIDs.has(bk.uuid)) || activeSwaps.has(dev)) {
+        add(`⏭ ${dev} ignorée (devenue occupée depuis l'analyse)`); continue;
+      }
+    }
+
+    add(`🧹 Effacement de la signature de ${dev}...`);
+    const w = await executeCommand('sudo', ['-n', 'wipefs', '-a', dev]);
+    if (w.exitCode !== 0) { add(`❌ wipefs ${dev}: ${w.stderr.trim() || 'échec'}`); continue; }
+    add(`➕ Ajout de ${dev} (${gib(item.sizeBytes)}) à ${targetMount}...`);
+    const a = await executeCommand('sudo', ['-n', 'btrfs', 'device', 'add', '-f', dev, targetMount]);
+    if (a.exitCode !== 0) { add(`❌ btrfs device add ${dev}: ${a.stderr.trim() || 'échec'}`); continue; }
+    add(`✅ ${dev} ajoutée à la racine`);
+    btrfsDevs.add(dev);
+  }
+
+  const curR = await executeCommand('findmnt', ['-bno', 'SIZE', targetMount]);
+  const newSizeBytes = curR.exitCode === 0 ? (parseInt(curR.stdout.trim()) || 0) : 0;
+  add(`🏁 Terminé. Nouvelle taille de ${targetMount} : ${gib(newSizeBytes)}`);
+  return { newSizeBytes };
+}
+
+/**
+ * POST /api/storage/disk-reclaim  (destructif : wipefs + btrfs device add)
+ */
+let diskReclaimRunning = false;
+router.post('/storage/disk-reclaim', authenticateTokenOrFirstTime, async (req: any, res: any) => {
+  if (diskReclaimRunning) return res.status(409).json({ success: false, error: 'Une récupération est déjà en cours' });
+  diskReclaimRunning = true;
+  const log: string[] = [];
+  const add = (m: string) => { log.push(m); if (io) io.emit('disk-reclaim-log', m); };
+  try {
+    const { newSizeBytes } = await drReclaimRun(add);
+    diskReclaimRunning = false;
+    res.json({ success: true, log, newSizeBytes });
+  } catch (error: any) {
+    diskReclaimRunning = false;
+    add(`❌ Erreur: ${error.message}`);
+    res.status(400).json({ success: false, error: error.message, log });
   }
 });
 

@@ -820,7 +820,7 @@
     "dockerCurrentLocation": "Emplacement actuel",
     "dockerMoveSelectTarget": "Partition cible",
     "dockerMoveNoTarget": "Aucune autre partition montée disponible",
-    "dockerMoveGrow": "Agrandir la partition cible pour remplir le disque (un redémarrage peut être nécessaire pour la partition système)",
+    "dockerMoveGrow": "Agrandir la partition cible pour remplir le disque (à chaud, sans redémarrage)",
     "dockerMoveChecking": "Pré-vérifications en cours...",
     "dockerMoveRequired": "Espace requis",
     "dockerMoveAvailable": "Disponible",

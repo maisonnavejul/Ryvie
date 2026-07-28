@@ -813,7 +813,7 @@
     "dockerCurrentLocation": "Current location",
     "dockerMoveSelectTarget": "Target partition",
     "dockerMoveNoTarget": "No other mounted partition available",
-    "dockerMoveGrow": "Grow the target partition to fill the disk (a reboot may be required for the system partition)",
+    "dockerMoveGrow": "Grow the target partition to fill the disk (online, no reboot needed)",
     "dockerMoveChecking": "Running pre-checks...",
     "dockerMoveRequired": "Required space",
     "dockerMoveAvailable": "Available",

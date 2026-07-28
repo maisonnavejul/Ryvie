@@ -190,9 +190,14 @@ const StorageSettings = () => {
   const [showDockerMoveModal, setShowDockerMoveModal] = useState(false);
   const [dockerMoveTarget, setDockerMoveTarget] = useState<string>('');
   const [dockerMoveGrow, setDockerMoveGrow] = useState(false);
+  const [dockerMoveReclaim, setDockerMoveReclaim] = useState(false);
   const [dockerMovePrechecks, setDockerMovePrechecks] = useState<any>(null);
   const [dockerMovePrechecking, setDockerMovePrechecking] = useState(false);
   const [dockerMoveState, setDockerMoveState] = useState<any>(null);
+
+  // Analyse de l'espace récupérable (anciennes installs) — alimente la case du modal Docker move
+  const [diskReclaim, setDiskReclaim] = useState<any>(null);
+  const [diskReclaimScanning, setDiskReclaimScanning] = useState(false);
 
   // Helper: strip emojis from strings for consistent UI DA
   const stripEmojis = (str) => {
@@ -1041,29 +1046,33 @@ const StorageSettings = () => {
   // Points de montage candidats (dérivés des disques), hors emplacement Docker actuel
   const getCandidateMounts = useCallback((): string[] => {
     const current = dockerLocation?.currentMount;
+    // Points de montage à ne jamais proposer comme cible Docker (EFI, /boot, etc.)
+    const isValidTarget = (mp: string) =>
+      mp && mp.startsWith('/') && mp !== current &&
+      mp !== '/boot' && !mp.startsWith('/boot/');
     const set = new Set<string>();
     (disks || []).forEach((disk: any) => {
       (disk.children || []).forEach((ch: any) => {
         (ch.mountpoints || []).forEach((mp: string) => {
-          if (mp && mp.startsWith('/') && mp !== current) set.add(mp);
+          if (isValidTarget(mp)) set.add(mp);
         });
       });
       (disk.mountpoints || []).forEach((mp: string) => {
-        if (mp && mp.startsWith('/') && mp !== current) set.add(mp);
+        if (isValidTarget(mp)) set.add(mp);
       });
     });
     return Array.from(set).sort();
   }, [disks, dockerLocation]);
 
   // Lance les pré-vérifications pour une cible donnée
-  const runDockerMovePrechecks = async (targetMount: string, grow: boolean) => {
+  const runDockerMovePrechecks = async (targetMount: string, grow: boolean, reclaim = false) => {
     setDockerMovePrechecking(true);
     setDockerMovePrechecks(null);
     try {
       const accessMode = getCurrentAccessMode() || 'private';
       const serverUrl = getServerUrl(accessMode);
       const resp = await axios.post(`${serverUrl}/api/storage/docker-move-prechecks`, {
-        targetMount, growRequested: grow
+        targetMount, growRequested: grow, reclaimRequested: reclaim
       }, { timeout: 60000 });
       setDockerMovePrechecks(resp.data);
     } catch (error) {
@@ -1083,7 +1092,7 @@ const StorageSettings = () => {
       const accessMode = getCurrentAccessMode() || 'private';
       const serverUrl = getServerUrl(accessMode);
       const resp = await axios.post(`${serverUrl}/api/storage/docker-move`, {
-        targetMount: dockerMoveTarget, growRequested: dockerMoveGrow
+        targetMount: dockerMoveTarget, growRequested: dockerMoveGrow, reclaimRequested: dockerMoveReclaim
       }, { timeout: 30000 });
       if (resp.data.success) {
         addLog('Déplacement Docker démarré', 'success');
@@ -1124,10 +1133,26 @@ const StorageSettings = () => {
     }
   };
 
+  // Scanne le disque système pour l'espace récupérable (anciennes installs orphelines)
+  const loadDiskReclaim = useCallback(async () => {
+    setDiskReclaimScanning(true);
+    try {
+      const accessMode = getCurrentAccessMode() || 'private';
+      const serverUrl = getServerUrl(accessMode);
+      const resp = await axios.post(`${serverUrl}/api/storage/disk-reclaim-scan`, {}, { timeout: 60000 });
+      setDiskReclaim(resp.data);
+    } catch (error) {
+      setDiskReclaim({ success: false, canProceed: false, reasons: [error.response?.data?.error || error.message] });
+    } finally {
+      setDiskReclaimScanning(false);
+    }
+  }, []);
+
   // Charger l'emplacement Docker au montage (et reprendre un déplacement en cours)
   useEffect(() => {
     loadDockerLocation();
-  }, [loadDockerLocation]);
+    loadDiskReclaim();
+  }, [loadDockerLocation, loadDiskReclaim]);
 
   // Check if the array can be grown (members larger than used dev size)
   const checkCanGrow = useCallback(async () => {
@@ -1895,8 +1920,10 @@ const StorageSettings = () => {
                       onClick={() => {
                         setDockerMoveTarget('');
                         setDockerMoveGrow(false);
+                        setDockerMoveReclaim(false);
                         setDockerMovePrechecks(null);
                         loadDockerLocation();
+                        loadDiskReclaim();
                         setShowDockerMoveModal(true);
                       }}
                     >
@@ -2539,6 +2566,7 @@ const StorageSettings = () => {
               </div>
             </div>
 
+            {/* Agrandir la partition cible pour remplir le disque (à chaud, sans reboot) */}
             <div className="modal-section">
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                 <input type="checkbox" checked={dockerMoveGrow}
@@ -2553,16 +2581,25 @@ const StorageSettings = () => {
 
             {dockerMovePrechecks && !dockerMovePrechecking && (
               <div className="modal-section" style={{ background: '#f8f9fa', padding: '1rem', borderRadius: '6px' }}>
-                <div>{t('storageSettings.dockerMoveRequired')} : <strong>{formatBytes(dockerMovePrechecks.requiredBytes || 0)}</strong> — {t('storageSettings.dockerMoveAvailable')} : <strong>{formatBytes(dockerMovePrechecks.availableBytes || 0)}</strong></div>
-                {dockerMovePrechecks.growPlan && dockerMovePrechecks.growPlan.rebootWillBeRequired && (
-                  <div className="storage-alert storage-alert-warning" style={{ marginTop: '0.5rem' }}>{t('storageSettings.dockerMoveRebootWarning')}</div>
+                <div>{t('storageSettings.dockerMoveRequired')} : <strong>{formatBytes(dockerMovePrechecks.requiredBytes || 0)}</strong> · {t('storageSettings.dockerMoveAvailable')} : <strong>{formatBytes(dockerMovePrechecks.availableBytes || 0)}</strong>
+                  {(dockerMovePrechecks.projectedAvailableBytes || 0) > (dockerMovePrechecks.availableBytes || 0) && (
+                    <span> → <strong style={{ color: '#10b981' }}>{formatBytes(dockerMovePrechecks.projectedAvailableBytes || 0)}</strong> après agrandissement</span>
+                  )}
+                </div>
+                {dockerMovePrechecks.growPlan && dockerMovePrechecks.growPlan.supported && !dockerMovePrechecks.growPlan.alreadyMax && (
+                  <div style={{ marginTop: '0.5rem', color: '#10b981' }}>
+                    ✓ L'agrandissement se fait à chaud, sans redémarrage : seule la fin de la partition bouge, aucune donnée n'est déplacée.
+                    {dockerMovePrechecks.growPlan.swapRelocation && ' Le swap sera recréé en fin de disque (brève désactivation).'}
+                  </div>
                 )}
                 {dockerMovePrechecks.reasons && dockerMovePrechecks.reasons.length > 0 && (
                   <ul style={{ color: '#ef4444', margin: '0.5rem 0 0', paddingLeft: '1.2rem' }}>
                     {dockerMovePrechecks.reasons.map((r: string, i: number) => <li key={i}>{r}</li>)}
                   </ul>
                 )}
-                <div className="storage-alert storage-alert-warning" style={{ marginTop: '0.5rem' }}>{t('storageSettings.dockerMoveDowntime')}</div>
+                <div className="storage-alert storage-alert-error" style={{ marginTop: '0.5rem', fontWeight: 600 }}>
+                  ⚠️ Attention : toutes les applications (Docker) seront arrêtées pendant l'opération et redémarreront une fois la copie terminée. Prévois une courte interruption de service.
+                </div>
               </div>
             )}
 
@@ -2577,6 +2614,7 @@ const StorageSettings = () => {
           </div>
         </div>
       )}
+
     </div>
   );
 };
