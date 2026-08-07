@@ -10,22 +10,38 @@ let serverInfoCache: any = null;
 let serverInfoCacheTime = 0;
 const CACHE_DURATION = 10000; // 10 secondes
 
-// Métriques temps réel (CPU + RAM) — peu coûteuses, calculées à CHAQUE appel.
-//  - CPU : charge moyenne sur l'intervalle depuis le dernier appel (si.currentLoad),
-//    bien plus représentative qu'un échantillon ponctuel de 1 s.
-//  - RAM : basée sur la mémoire DISPONIBLE (exclut le cache/buffers réclamables),
-//    comme `free`/htop — sinon on affiche ~100 % à cause du cache disque Linux.
-async function computeLiveMetrics() {
-  let ramUsagePercentage: string;
+// Métriques temps réel (CPU + RAM), modèle CasaOS : UN SEUL échantillonneur
+// périodique côté serveur, et les requêtes HTTP se contentent de LIRE le dernier
+// échantillon.
+//
+// Pourquoi c'est indispensable : si.currentLoad() (comme cpu.Percent(0) de
+// gopsutil) renvoie la charge moyenne DEPUIS SON APPEL PRÉCÉDENT, via un compteur
+// global au processus. Le calculer dans le handler HTTP le rendait donc dépendant
+// du trafic : Settings (5 s), CpuRamWidget (8 s) et StorageWidget (30 s) tapent
+// tous /api/server-info, multipliés par le nombre d'onglets et d'utilisateurs.
+// Deux appels rapprochés ⇒ fenêtre de mesure de quelques millisecondes ⇒ valeur
+// aberrante (0 % ou 100 %). Le ticker fixe garantit une fenêtre régulière.
+const SAMPLE_INTERVAL_MS = 5000; // identique au cron "@every 5s" de CasaOS
+
+let liveMetrics = { cpu: '0.0%', ram: '0.0%', ramTotal: 0, ramUsed: 0 };
+
+async function sampleLiveMetrics() {
+  // RAM : basée sur la mémoire DISPONIBLE (exclut le cache/buffers réclamables),
+  // comme `free`/htop — sinon on affiche ~100 % à cause du cache disque Linux.
+  // C'est aussi la formule de gopsutil (Used = Total - Available), donc identique
+  // à ce qu'affiche CasaOS.
+  let ramTotal = 0;
+  let ramUsed = 0;
   try {
     const m = await si.mem();
     const avail = (m.available != null ? m.available : m.free);
-    ramUsagePercentage = (((m.total - avail) / m.total) * 100).toFixed(1);
+    ramTotal = m.total;
+    ramUsed = m.total - avail;
   } catch (_) {
-    const totalRam = os.totalmem();
-    const freeRam = os.freemem();
-    ramUsagePercentage = (((totalRam - freeRam) / totalRam) * 100).toFixed(1);
+    ramTotal = os.totalmem();
+    ramUsed = os.totalmem() - os.freemem();
   }
+  const ramUsagePercentage = ramTotal > 0 ? ((ramUsed / ramTotal) * 100).toFixed(1) : '0.0';
 
   let cpuUsagePercentage: string;
   try {
@@ -37,14 +53,33 @@ async function computeLiveMetrics() {
     });
   }
 
-  return { cpu: `${cpuUsagePercentage}%`, ram: `${ramUsagePercentage}%` };
+  liveMetrics = {
+    cpu: `${cpuUsagePercentage}%`,
+    ram: `${ramUsagePercentage}%`,
+    ramTotal,
+    ramUsed,
+  };
+}
+
+// Premier échantillon lancé au chargement du module, puis ticker régulier.
+// unref() : ce timer ne doit pas empêcher le processus de se terminer.
+let hasSample = false;
+const firstSample = sampleLiveMetrics().then(() => { hasSample = true; }).catch(() => { hasSample = true; });
+const sampler = setInterval(() => { sampleLiveMetrics().catch(() => {}); }, SAMPLE_INTERVAL_MS);
+if (typeof sampler.unref === 'function') sampler.unref();
+
+async function computeLiveMetrics() {
+  // Une requête arrivant avant la fin du tout premier échantillon doit l'attendre,
+  // sinon elle renverrait 0 % / 0 octet au lieu de valeurs réelles.
+  if (!hasSample) await firstSample;
+  return liveMetrics;
 }
 
 async function getServerInfo() {
   const now = Date.now();
 
-  // CPU + RAM toujours frais (jamais cachés) : sinon la valeur reste figée 10 s
-  // et ne reflète pas l'état réel du système.
+  // CPU + RAM : lecture du dernier échantillon du ticker (rafraîchi toutes les
+  // 5 s indépendamment du trafic HTTP), jamais du cache 10 s ci-dessous.
   const live = await computeLiveMetrics();
 
   // Le reste (disque, apps, utilisateurs, RAID) est coûteux → cache 10 s.

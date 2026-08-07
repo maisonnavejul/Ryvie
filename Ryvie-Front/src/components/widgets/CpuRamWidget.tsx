@@ -41,10 +41,6 @@ const CpuRamWidget = ({ id, onRemove, accessMode }: { id: string; onRemove?: () 
   const cpuAnimRef = useRef<number | null>(null);
   const ramAnimRef = useRef<number | null>(null);
   
-  // Historique des valeurs pour moyenne mobile (CasaOS-style)
-  const cpuHistoryRef = useRef<number[]>([]);
-  const ramHistoryRef = useRef<number[]>([]);
-  const HISTORY_SIZE = 3; // fenêtre courte (~30s) : suit le système sans trop lisser
 
   useEffect(() => {
     const fetchSystemStats = async () => {
@@ -102,51 +98,19 @@ const CpuRamWidget = ({ id, onRemove, accessMode }: { id: string; onRemove?: () 
     return () => clearInterval(interval);
   }, [accessMode]);
 
-  // Moyenne mobile pour ignorer les pics courts (CasaOS-style)
+  // Lissage exponentiel léger, uniquement pour adoucir le mouvement des jauges.
+  //
+  // L'ancienne « moyenne intelligente » écartait les échantillons éloignés de plus
+  // de 30 % de la MÉDIANE, un seuil proportionnel : à 2 % de CPU il ne tolérait
+  // que ±0,6 point, et à 0 % il n'acceptait plus que la valeur exacte. Les jauges
+  // restaient donc collées au repos alors que la charge montait. Le serveur
+  // échantillonne désormais sur une fenêtre fixe de 5 s (cf. systemService), donc
+  // il n'y a plus de pic parasite à filtrer.
   useEffect(() => {
-    // Ajouter les nouvelles valeurs à l'historique
-    cpuHistoryRef.current.push(data.cpu);
-    ramHistoryRef.current.push(data.ram);
-    
-    // Garder seulement les N derniers échantillons
-    if (cpuHistoryRef.current.length > HISTORY_SIZE) {
-      cpuHistoryRef.current.shift();
-    }
-    if (ramHistoryRef.current.length > HISTORY_SIZE) {
-      ramHistoryRef.current.shift();
-    }
-    
-    // Fonction pour calculer la moyenne en ignorant les outliers extrêmes
-    const calculateSmartAverage = (values: number[]) => {
-      if (values.length === 0) return 0;
-      if (values.length <= 2) return values.reduce((sum, val) => sum + val, 0) / values.length;
-      
-      // Trier pour trouver la médiane et ignorer les valeurs extrêmes
-      const sorted = [...values].sort((a, b) => a - b);
-      const median = sorted[Math.floor(sorted.length / 2)];
-      
-      // Filtrer les valeurs qui sont trop éloignées de la médiane (>30% d'écart)
-      const threshold = median * 0.3;
-      const filtered = values.filter((val: number) => Math.abs(val - median) <= threshold);
-      
-      // Si on a filtré trop de valeurs, utiliser toutes les valeurs
-      if (filtered.length < values.length / 2) {
-        return values.reduce((sum: number, val: number) => sum + val, 0) / values.length;
-      }
-      
-      // Calculer la moyenne des valeurs filtrées
-      return filtered.reduce((sum: number, val: number) => sum + val, 0) / filtered.length;
-    };
-    
-    // Calculer la moyenne intelligente
-    const cpuAvg = calculateSmartAverage(cpuHistoryRef.current);
-    const ramAvg = calculateSmartAverage(ramHistoryRef.current);
-    
-    // Appliquer un lissage exponentiel léger sur la moyenne pour des transitions douces
-    const ALPHA = 0.5; // plus réactif : le widget rattrape plus vite la valeur réelle
+    const ALPHA = 0.5; // 0 = figé, 1 = brut. 0.5 : réactif mais sans à-coups.
     setSmoothed((prev) => ({
-      cpu: prev.cpu === 0 ? cpuAvg : ALPHA * cpuAvg + (1 - ALPHA) * prev.cpu,
-      ram: prev.ram === 0 ? ramAvg : ALPHA * ramAvg + (1 - ALPHA) * prev.ram,
+      cpu: prev.cpu === 0 ? data.cpu : ALPHA * data.cpu + (1 - ALPHA) * prev.cpu,
+      ram: prev.ram === 0 ? data.ram : ALPHA * data.ram + (1 - ALPHA) * prev.ram,
     }));
   }, [data.cpu, data.ram]);
 

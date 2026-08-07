@@ -2938,9 +2938,6 @@ const Home = () => {
             <span className="mode-indicator">
               {accessMode === 'private' ? t('home.connectionStatus.local') : t('home.connectionStatus.remote')}
             </span>
-            {!isElectron() && (
-              <span className="platform-indicator">{t('home.connectionStatus.web')}</span>
-            )}
           </div>
 
           {isLoading && (

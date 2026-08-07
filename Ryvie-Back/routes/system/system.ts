@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { verifyToken } = require('../../middleware/auth');
 const { getServerInfo, restartServer } = require('../../services/system/systemService');
+const { getSshStatus, setSshEnabled } = require('../../services/system/sshService');
+const { getAccountStatus, setSystemPassword, validatePassword } = require('../../services/system/systemAccountService');
 const si = require('systeminformation');
 const { getLocalIP } = require('../../utils/network');
 const { APPS_DIR, MANIFESTS_DIR } = require('../../config/paths');
@@ -327,6 +329,78 @@ router.get('/disks', async (req: any, res: any) => {
   } catch (err: any) {
     console.error('Erreur récupération info disques :', err);
     res.status(500).json({ error: 'Impossible de récupérer les informations de disques' });
+  }
+});
+
+// GET /api/system/ssh — état du service SSH (admin uniquement : la réponse
+// expose la présence de clés et l'état de l'auth par mot de passe).
+router.get('/system/ssh', verifyToken, async (req: any, res: any) => {
+  try {
+    if (req.user.role !== 'Admin') {
+      return res.status(403).json({ error: 'Accès refusé. Réservé aux administrateurs.' });
+    }
+    res.json(await getSshStatus());
+  } catch (error: any) {
+    console.error('[System] Erreur récupération état SSH:', error);
+    res.status(500).json({ error: 'Impossible de lire l\'état du service SSH' });
+  }
+});
+
+// POST /api/system/ssh { enabled: boolean }
+router.post('/system/ssh', verifyToken, async (req: any, res: any) => {
+  try {
+    if (req.user.role !== 'Admin') {
+      return res.status(403).json({ error: 'Accès refusé. Réservé aux administrateurs.' });
+    }
+
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'Le champ "enabled" doit être un booléen.' });
+    }
+
+    console.log(`[System] SSH ${enabled ? 'activé' : 'désactivé'} par ${req.user.username}`);
+    const status = await setSshEnabled(enabled);
+    res.json({ success: true, ...status });
+  } catch (error: any) {
+    console.error('[System] Erreur modification état SSH:', error);
+    res.status(500).json({ error: 'Impossible de modifier l\'état du service SSH' });
+  }
+});
+
+// GET /api/system/account — indique notamment si le mot de passe par défaut de
+// l'image Ryvie OS est toujours en place.
+router.get('/system/account', verifyToken, async (req: any, res: any) => {
+  try {
+    if (req.user.role !== 'Admin') {
+      return res.status(403).json({ error: 'Accès refusé. Réservé aux administrateurs.' });
+    }
+    res.json(await getAccountStatus());
+  } catch (error: any) {
+    console.error('[System] Erreur récupération état du compte système:', error);
+    res.status(500).json({ error: 'Impossible de lire l\'état du compte système' });
+  }
+});
+
+// POST /api/system/account/password { newPassword: string }
+router.post('/system/account/password', verifyToken, async (req: any, res: any) => {
+  try {
+    if (req.user.role !== 'Admin') {
+      return res.status(403).json({ error: 'Accès refusé. Réservé aux administrateurs.' });
+    }
+
+    const { newPassword } = req.body || {};
+    const validationError = validatePassword(newPassword);
+    if (validationError) {
+      return res.status(400).json({ error: validationError });
+    }
+
+    await setSystemPassword(newPassword);
+    // Volontairement sans le mot de passe ni sa longueur dans le journal.
+    console.log(`[System] Mot de passe du compte système changé par ${req.user.username}`);
+    res.json({ success: true, ...(await getAccountStatus()) });
+  } catch (error: any) {
+    console.error('[System] Erreur changement du mot de passe système:', error?.message);
+    res.status(500).json({ error: 'Impossible de changer le mot de passe du compte système' });
   }
 });
 
