@@ -3,7 +3,7 @@ import '../styles/pages/Settings.css';
 import { useNavigate } from 'react-router-dom';
 import axios from '../utils/setupAxios';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faServer, faHdd, faDatabase, faPlug, faGlobe, faCheck, faCopy, faNetworkWired, faLaptop, faCircle, faSpinner, faDesktop, faMobileScreen, faEye, faEyeSlash, faArrowLeft, faArrowRight } from '@fortawesome/free-solid-svg-icons';
+import { faServer, faHdd, faDatabase, faPlug, faGlobe, faCheck, faCopy, faNetworkWired, faLaptop, faCircle, faSpinner, faDesktop, faMobileScreen, faEye, faEyeSlash, faArrowLeft, faArrowRight, faTerminal } from '@fortawesome/free-solid-svg-icons';
 import { faApple, faWindows, faLinux, faAndroid } from '@fortawesome/free-brands-svg-icons';
 import { isElectron } from '../utils/platformUtils';
 import urlsConfig from '../config/urls';
@@ -13,6 +13,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { getCurrentUserRole, getCurrentUser, startSession, isSessionActive, getSessionInfo, endSession } from '../utils/sessionManager';
 import StorageSettings from './StorageSettings';
 import AiSettings from '../components/settings/AiSettings';
+import SshPanel from '../components/settings/SshPanel';
 import { useUpdate } from '../contexts/UpdateContext';
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -4053,6 +4054,23 @@ const Settings = () => {
         </div>
       )}
 
+
+      {/* Section Accès SSH — juste avant la Zone Dangereuse, réservée aux admins
+          (elle agit sur le service système et le mot de passe du compte hôte) */}
+      {isAdmin && (
+        <section className="settings-section">
+          <h2>
+            <FontAwesomeIcon icon={faTerminal} style={{ marginRight: '8px' }} />
+            {t('settings.sshTitle')}
+          </h2>
+          <p className="setting-description" style={{ marginBottom: '16px', color: '#666' }}>
+            {t('settings.sshDescription')}
+          </p>
+          <div className="settings-grid">
+            <SshPanel accessMode={accessMode} />
+          </div>
+        </section>
+      )}
 
       {/* Section Redémarrage du Serveur */}
       {isAdmin && (
